@@ -25,12 +25,23 @@ class StepContext:
 
 
 @dataclass
+class MarketHeatCell:
+    """单个网格区域的市场热度。"""
+    count: int = 0
+    total_net: float = 0.0
+    best_net: float = 0.0
+    avg_price: float = 0.0
+
+@dataclass
 class DriverMemory:
     records: list[StepContext] = field(default_factory=list)
     accepted_orders_by_day: dict[int, int] = field(default_factory=dict)
     active_minutes_by_day: dict[int, int] = field(default_factory=dict)
     wait_intervals_by_day: dict[int, list[tuple[int, int]]] = field(default_factory=dict)
     deadhead_km: float = 0.0
+    # market_heat: 网格分辨率 0.5 度，key=(lat_grid, lng_grid)
+    market_heat: dict[tuple[int, int], MarketHeatCell] = field(default_factory=dict)
+    last_reposition_minute: int = -9999
 
     def accepted_orders_today(self, now_minute: int) -> int:
         return self.accepted_orders_by_day.get(now_minute // DAY_MINUTES, 0)
@@ -80,6 +91,31 @@ class DriverMemory:
             if haversine_km(rec.after_lat, rec.after_lng, lat, lng) <= radius_km:
                 days.add(rec.step_end // DAY_MINUTES)
         return days
+
+    def record_market_observation(self, lat: float, lng: float, net_value: float, price: float) -> None:
+        """记录一次货源观察到 market_heat。"""
+        grid = (int(lat * 2), int(lng * 2))  # 0.5 度网格
+        cell = self.market_heat.get(grid)
+        if cell is None:
+            cell = MarketHeatCell()
+            self.market_heat[grid] = cell
+        cell.count += 1
+        cell.total_net += net_value
+        cell.best_net = max(cell.best_net, net_value)
+        cell.avg_price = (cell.avg_price * (cell.count - 1) + price) / cell.count
+
+    def best_market_areas(self, top_k: int = 3) -> list[tuple[float, float, float]]:
+        """返回最佳市场区域 (lat, lng, score)，按平均净收益排序。"""
+        if not self.market_heat:
+            return []
+        areas = []
+        for (lat_g, lng_g), cell in self.market_heat.items():
+            if cell.count < 2:
+                continue
+            avg_net = cell.total_net / cell.count
+            areas.append((lat_g / 2.0 + 0.25, lng_g / 2.0 + 0.25, avg_net))
+        areas.sort(key=lambda x: x[2], reverse=True)
+        return areas[:top_k]
 
 
 def build_memory(history_resp: dict[str, Any] | None) -> DriverMemory:
@@ -134,6 +170,7 @@ def build_memory(history_resp: dict[str, Any] | None) -> DriverMemory:
             memory.deadhead_km += float(rec.result.get("pickup_deadhead_km", 0.0) or 0.0)
         elif rec.action_name == "reposition":
             memory.deadhead_km += float(rec.result.get("distance_km", 0.0) or 0.0)
+            memory.last_reposition_minute = rec.action_end
 
         prev_end = step_end
     return memory

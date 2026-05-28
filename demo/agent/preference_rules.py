@@ -12,6 +12,7 @@ from typing import Any
 
 from agent.geo import (
     DAY_MINUTES,
+    MONTH_HORIZON_MINUTES,
     day_end,
     day_index,
     haversine_km,
@@ -190,6 +191,36 @@ def should_preserve_no_order_day(policy: PreferencePolicy, memory: DriverMemory,
     return memory.accepted_orders_today(now_minute) == 0
 
 
+def must_rest_today_proactive(policy: PreferencePolicy, memory: DriverMemory, now_minute: int) -> str | None:
+    """月度前瞻：检查今天是否必须作为休息日。
+    返回 "off_day"（不能有任何活动）或 "no_order_day"（不能接单）或 None。"""
+    current_day = now_minute // DAY_MINUTES
+    month_days = MONTH_HORIZON_MINUTES // DAY_MINUTES  # 31
+    days_remaining = month_days - current_day
+
+    # off-day 检查（D006/D008：active_minutes == 0）
+    off_needed = int(policy.off_days_required or 0)
+    if off_needed > 0:
+        off_done = memory.completed_off_days(now_minute)
+        off_still_needed = off_needed - off_done
+        if off_still_needed > 0 and days_remaining <= off_still_needed:
+            # 今天必须是 off-day
+            if memory.active_minutes_today(now_minute) == 0:
+                return "off_day"
+            # 今天已有活动，无法作为 off-day，往后推
+
+    # no-order-day 检查（D002/D007：无 accepted take_order）
+    no_order_needed = int(policy.no_order_days_required or 0)
+    if no_order_needed > 0:
+        no_order_done = memory.completed_no_order_days(now_minute)
+        no_order_still_needed = no_order_needed - no_order_done
+        if no_order_still_needed > 0 and days_remaining <= no_order_still_needed:
+            if memory.accepted_orders_today(now_minute) == 0:
+                return "no_order_day"
+
+    return None
+
+
 def _preference_text(item: Any) -> str:
     if isinstance(item, str):
         return item.strip()
@@ -211,7 +242,7 @@ def _parse_cargo_names(text: str, policy: PreferencePolicy) -> None:
 
 
 def _parse_rest(text: str, policy: PreferencePolicy) -> None:
-    if "连续" not in text or not any(k in text for k in ("休息", "停车", "歇")):
+    if not any(k in text for k in ("连续", "连着")) or not any(k in text for k in ("休息", "停车", "歇")):
         return
     match = re.search(r"(?:满|至少)(\d+)小时|(\d+)小时", text)
     if not match:
@@ -278,7 +309,7 @@ def _parse_geo_rules(text: str, policy: PreferencePolicy) -> None:
             float(bounds_match.group(4)),
         )
     zone_match = re.search(r"以[（(]\s*([0-9.]+)\s*[，,]\s*([0-9.]+)\s*[）)].*?半径\s*([0-9.]+)\s*公里", text)
-    if zone_match and "不得进入" in text:
+    if zone_match and any(k in text for k in ("不得进入", "禁止进入", "不得驶入", "不允许进入", "不可进入")):
         policy.forbidden_zones.append(
             ForbiddenZone(float(zone_match.group(1)), float(zone_match.group(2)), float(zone_match.group(3)))
         )
