@@ -1,0 +1,30 @@
+# Secrets and local config
+.env
+*.env
+demo/server/config/config.json
+
+# Runtime outputs
+demo/results/
+*.log
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local environments
+.venv/
+venv/
+env/
+
+# Temporary download/tooling artifacts
+tools/
+.ossutil_checkpoint/
+data/raw/
+ossutil-*.zip
+
+# OS/editor noise
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
