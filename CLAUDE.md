@@ -102,7 +102,7 @@ set AGENT_ENABLE_QWEN35_FLASH=1
 
 ## 下一轮必须加入的 Qwen3.5-Flash 迭代任务
 
-今天不开始实现，但下一位模型必须把这件事作为最高级工程任务之一：在保持确定性降级的前提下，让 `qwen3.5-flash` 真实参与本地迭代，而不是只做离线/无模型策略。
+今天不把模型接入 `planner.py` 主决策流程，但下一位模型必须把这件事作为最高级工程任务之一：在保持确定性降级的前提下，让 `qwen3.5-flash` 真实参与本地迭代，而不是只做离线/无模型策略。
 
 建议目标架构：
 
@@ -113,9 +113,9 @@ set AGENT_ENABLE_QWEN35_FLASH=1
 5. 模型调用必须通过 `SimulationApiPort.model_chat_completion`，显式使用 `model: "qwen3.5-flash"`。
 6. 必须记录 token、调用次数、运行时间、收益和罚分对比，评估“启用 Qwen”是否真的改进。
 
-建议第一版实现入口：
+建议第一版集成入口：
 
-- 在 `demo/agent/llm_helper.py` 增加 `choose_candidate(...)`，让模型只从本地候选 index 中选择。
+- 整理并使用 `demo/agent/llm_helper.py` 里已有的 `rank_cargos(...)`、`suggest_decision(...)`、`preference_hints(...)`；如有必要，把 `suggest_decision(...)` 收敛成更保守的 `choose_candidate(...)`。
 - 在 `demo/agent/preference_rules.py` 增加 `apply_qwen_hints(...)`，把模型结构化偏好保守合并进 `PreferencePolicy`；只能新增或收紧约束，不能放松规则。
 - 在 `demo/agent/planner.py` 中，当候选分数接近、存在 home-night/family/rest/required-cargo/required-visit 等高风险偏好时，调用 Qwen 做候选复审。
 - 增加环境变量 `AGENT_QWEN_MAX_REVIEWS` 控制每次仿真的候选复审次数，避免 token 和运行时间失控。
@@ -197,13 +197,13 @@ C:\Users\20689\miniconda3\Scripts\conda.exe run -n mus-tread python -m compileal
 
 ### 高优先级：Qwen3.5-Flash 模型集成
 
-`llm_helper.py` 已写好三个模型接口方法，但尚未集成到 `planner.py` 决策流程中：
+`llm_helper.py` 当前已有三个模型接口方法，但尚未集成到 `planner.py` 决策流程中：
 
 - `rank_cargos()`：对候选货源打分（0-100），返回 `{cargo_id: score}`。用于替代或增强 `_evaluate_cargo` 的确定性评分。
 - `suggest_decision()`：从候选动作中选最优，返回索引。用于在 `take_order/wait/reposition` 候选间做最终选择。
 - `preference_hints()`：偏好结构化提示（已有，仅日志记录未实际使用）。
 
-集成方案：
+下一轮集成方案：
 
 1. 在 `decide()` 中，当 `self._qwen.enabled` 为 True 时，调用 `rank_cargos` 获取模型评分。
 2. 将模型评分与确定性评分加权融合：`final_score = alpha * model_score + (1-alpha) * det_score`。初始 alpha=0.4。

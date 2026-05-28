@@ -33,10 +33,10 @@ $env:AGENT_ENABLE_QWEN35_FLASH = "1"
 
 ## 下一轮 Qwen3.5-Flash 迭代要求
 
-今天尚未开始实现，下一位模型接手后应优先补上：
+今天不把模型接入 `planner.py` 主流程，下一位模型接手后应优先补上：
 
 - `preference_hints` 不能只打日志，应把 Qwen 输出保守合并到 `PreferencePolicy`。
-- 增加候选复审接口，让 Qwen 在本地已生成、已校验的候选动作中选择 index。
+- 整理并接入 `llm_helper.py` 里已有的 `rank_cargos` / `suggest_decision`，或收敛成更保守的候选复审接口，让 Qwen 在本地已生成、已校验的候选动作中选择 index。
 - 模型不能直接输出任意 `take_order/wait/reposition`，不能绕过本地合法性检查。
 - Qwen 主要处理偏好文本歧义和高风险候选判断，例如 home-night、家事、每日连续休息、指定熟货、必访点。
 - 设置 `AGENT_ENABLE_QWEN35_FLASH=1` 后，短测日志应能确认模型实际被调用。
