@@ -15,3 +15,7 @@
 ## 开发原则
 
 Agent 决策代码必须通过 `SimulationApiPort` 获取状态、货源与历史，禁止读取 `demo/server/data/cargo_dataset.jsonl`、`demo/server/data/drivers.json` 或其复制文件。正式提交以官方说明为准：初赛提交 `demo/agent/` 与必要 `demo/results/`，复赛至少提交 `demo/agent/`，不要把 `data/` 打进提交包。
+
+## 当前状态
+
+当前 Agent 已实现确定性滚动规划，并预留 `qwen3.5-flash` 可选接口。最近一次完整 31 天本地仿真无崩溃、无 `validation_error`，但仍有偏好罚分需要继续优化。下一位模型请优先阅读 `CLAUDE.md` 的“最近完整评测”和“下一步优先级”。

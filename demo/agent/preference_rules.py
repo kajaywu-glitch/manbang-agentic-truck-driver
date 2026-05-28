@@ -198,7 +198,7 @@ def must_rest_today_proactive(policy: PreferencePolicy, memory: DriverMemory, no
     month_days = MONTH_HORIZON_MINUTES // DAY_MINUTES  # 31
     days_remaining = month_days - current_day
 
-    # off-day 检查（D006/D008：active_minutes == 0）
+    # off-day 检查：active_minutes == 0 才能算完全不出车。
     off_needed = int(policy.off_days_required or 0)
     if off_needed > 0:
         off_done = memory.completed_off_days(now_minute)

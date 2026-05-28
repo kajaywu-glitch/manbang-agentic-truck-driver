@@ -28,3 +28,4 @@ ossutil-*.zip
 Thumbs.db
 .idea/
 .vscode/
+.claude/*.local.json

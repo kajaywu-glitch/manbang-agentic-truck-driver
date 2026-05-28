@@ -330,7 +330,7 @@ class DeterministicPlanner:
         current_lng = float(status["current_lng"])
         truck_length = str(status.get("truck_length") or "").strip()
 
-        # D009: 必接熟货优先 — 搜索 items 中匹配 required_cargo.cargo_id 的货源
+        # 指定熟货优先：搜索 items 中匹配 required_cargo.cargo_id 的货源。
         rc = policy.required_cargo
         if rc is not None and not memory.has_taken_cargo(rc.cargo_id):
             for item in items:
@@ -341,7 +341,7 @@ class DeterministicPlanner:
                         self._logger.info("required cargo %s found in items, taking unconditionally", rc.cargo_id)
                         return Candidate({"action": "take_order", "params": {"cargo_id": rc.cargo_id}}, 99999.0, "required_cargo")
                     else:
-                        # 货源存在但评估不通过（车型不匹配等），仍然强制接
+                        # TODO: 这里仍会强制接单，后续需区分硬约束失败和普通降权失败。
                         self._logger.info("required cargo %s found but evaluation failed, forcing take", rc.cargo_id)
                         return Candidate({"action": "take_order", "params": {"cargo_id": rc.cargo_id}}, 99999.0, "required_cargo_forced")
 
