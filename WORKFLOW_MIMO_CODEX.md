@@ -219,8 +219,10 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 建议增加或使用调用上限：
 
 ```powershell
-$env:AGENT_QWEN_MAX_REVIEWS = "300"
+$env:AGENT_QWEN_MAX_REVIEWS = "20"
 ```
+
+注意：2026-05-29 已实测，一上来用真实 Qwen 跑完整 31 天会非常慢。D001 还未跑完时就已耗时 20 分钟以上，日志中还出现 `Read timed out (read timeout=60.0)`。因此真实 Qwen 验证必须先低上限短测；不要直接开完整 31 天。
 
 验收标准：
 
@@ -256,7 +258,8 @@ cd D:\竞赛\demo
 C:\Users\20689\miniconda3\Scripts\conda.exe run -n mus-tread python calc_monthly_income.py
 ```
 
-5. 短测满足无崩溃、无 `validation_error`、token > 0 后，再跑完整 31 天评测。交接说明中必须记录：总净收入、总罚分、D009/D010 罚分、运行时间、token 用量、是否出现模型 fallback。
+5. 短测满足无崩溃、无 `validation_error`、token > 0 后，先把 `AGENT_QWEN_MAX_REVIEWS` 提高到 `50` 再跑较长短测；只有确认模型调用没有频繁 60 秒超时，才允许完整 31 天评测。交接说明中必须记录：总净收入、总罚分、D009/D010 罚分、运行时间、token 用量、是否出现模型 fallback。
+6. 完整 Qwen 评测前，Mimo 必须先收紧触发条件：不能在普通接单步骤频繁 `rank_cargos`，应只在 home-night、家事、连续休息、指定熟货、必访点或候选分数接近时触发。
 
 ## Hybrid Agent 启动门槛
 

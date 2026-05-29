@@ -161,12 +161,13 @@ set AGENT_ENABLE_QWEN35_FLASH=1
 真实 key 验证计划：
 
 1. **先修合规阻塞**：删除 `planner.py` 中 D010 `driver_id` hardcode，保留通用 `preferences` 解析路径。Qwen 验证不能在违规策略上作为可合并依据。
-2. **环境检查**：
+2. **环境检查并限制模型调用**：
 
 ```powershell
 cd D:\竞赛
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\scripts\load_local_env.ps1
+$env:AGENT_QWEN_MAX_REVIEWS = "20"
 ```
 
 3. **短测**：在同一终端运行 200 步，确认无崩溃、日志出现 `model_chat_completion ok` 或 Agent Qwen 日志。
@@ -183,7 +184,8 @@ cd D:\竞赛\demo
 C:\Users\20689\miniconda3\Scripts\conda.exe run -n mus-tread python calc_monthly_income.py
 ```
 
-5. **完整 31 天评测**：短测通过后再跑完整仿真，记录无模型 vs 启用 Qwen 的总净收入、总罚分、D009/D010 罚分、运行时间、token 用量和模型调用次数。
+5. **不要直接完整 Qwen 评测**：2026-05-29 已实测，真实 Qwen 完整 31 天在 D001 阶段就超过 20 分钟，并出现 60 秒读取超时。短测通过后先把上限调到 `50` 做较长短测，并收紧触发条件；只有模型调用频率和超时可控，再跑完整 31 天。
+6. **完整 31 天评测**：记录无模型 vs 启用 Qwen 的总净收入、总罚分、D009/D010 罚分、运行时间、token 用量和模型调用次数。
 
 需要注意：
 

@@ -137,6 +137,7 @@ D:\竞赛\demo\results\
 cd D:\竞赛
 Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\scripts\load_local_env.ps1
+$env:AGENT_QWEN_MAX_REVIEWS = "20"
 ```
 
 短测：
@@ -153,7 +154,7 @@ cd D:\竞赛\demo
 C:\Users\20689\miniconda3\Scripts\conda.exe run -n mus-tread python calc_monthly_income.py
 ```
 
-短测通过标准：无崩溃、无 `validation_error`、日志有模型调用、`monthly_income_202603.json` 中 token 大于 0。之后再跑完整 31 天，并和不开 Qwen 的基线对比。
+短测通过标准：无崩溃、无 `validation_error`、日志有模型调用、`monthly_income_202603.json` 中 token 大于 0。不要直接跑完整 Qwen 31 天；先把上限提高到 `50` 做较长短测，并确认没有频繁 60 秒超时。完整评测前必须收紧 Qwen 触发条件，避免普通接单步骤频繁调用 `rank_cargos`。
 
 ## 验证命令
 
