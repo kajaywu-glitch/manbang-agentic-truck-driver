@@ -225,10 +225,38 @@ $env:AGENT_QWEN_MAX_REVIEWS = "300"
 验收标准：
 
 - 不设置 key 时完整仿真仍可跑通。
+- 本机 `D:\竞赛\.env.local` 已由用户填写真实 key，`scripts/load_local_env.ps1` 可脱敏加载；任何人不得提交该文件或在文档/聊天中泄露 key。
 - 设置 key 后日志能确认模型实际参与。
 - `monthly_income_202603.json` 中 token 用量不为 0，但远低于复赛上限。
 - 启用 Qwen 后必须和确定性基线对比，不只看单次结果。
 - 若启用 Qwen 后罚分上升或耗时失控，优先减少触发场景或降低 `AGENT_QWEN_MAX_REVIEWS`，不要扩大调用范围。
+
+真实 key 短测/完整评测顺序：
+
+1. 先消除合规阻塞，尤其是删除 D010 `driver_id` hardcode。
+2. 在同一个 PowerShell 终端加载本地 key：
+
+```powershell
+cd D:\竞赛
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\scripts\load_local_env.ps1
+```
+
+3. 跑短测：
+
+```powershell
+cd D:\竞赛\demo\server
+C:\Users\20689\miniconda3\Scripts\conda.exe run -n mus-tread python main.py --max-steps 200
+```
+
+4. 计算收益并检查 token：
+
+```powershell
+cd D:\竞赛\demo
+C:\Users\20689\miniconda3\Scripts\conda.exe run -n mus-tread python calc_monthly_income.py
+```
+
+5. 短测满足无崩溃、无 `validation_error`、token > 0 后，再跑完整 31 天评测。交接说明中必须记录：总净收入、总罚分、D009/D010 罚分、运行时间、token 用量、是否出现模型 fallback。
 
 ## Hybrid Agent 启动门槛
 

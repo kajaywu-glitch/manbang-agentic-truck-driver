@@ -153,9 +153,37 @@ set AGENT_ENABLE_QWEN35_FLASH=1
 验收状态：
 
 - [x] 不设置 key 时短测和 31 天评测仍能跑通。
-- [ ] 设置 `AGENT_ENABLE_QWEN35_FLASH=1` 后，日志能看到真实模型调用（需真实 API key 测试）。
-- [ ] `monthly_income_202603.json` 中 token 用量不再全为 0（需真实 API key 测试）。
+- [x] 本机 `D:\竞赛\.env.local` 已配置真实 key，`scripts/load_local_env.ps1` 脱敏检查通过：`key_present=True`、key 形态为 `sk-...`、`.env.local` 被 Git 忽略。不要把 key 写入任何提交或文档。
+- [ ] 设置 `AGENT_ENABLE_QWEN35_FLASH=1` 后，日志能看到真实模型调用。
+- [ ] `monthly_income_202603.json` 中 token 用量不再全为 0。
 - [ ] 启用 Qwen 的完整 31 天结果要和确定性基线对比。
+
+真实 key 验证计划：
+
+1. **先修合规阻塞**：删除 `planner.py` 中 D010 `driver_id` hardcode，保留通用 `preferences` 解析路径。Qwen 验证不能在违规策略上作为可合并依据。
+2. **环境检查**：
+
+```powershell
+cd D:\竞赛
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\scripts\load_local_env.ps1
+```
+
+3. **短测**：在同一终端运行 200 步，确认无崩溃、日志出现 `model_chat_completion ok` 或 Agent Qwen 日志。
+
+```powershell
+cd D:\竞赛\demo\server
+C:\Users\20689\miniconda3\Scripts\conda.exe run -n mus-tread python main.py --max-steps 200
+```
+
+4. **短测后收益检查**：确认 `monthly_income_202603.json` 无 `validation_error`，token 大于 0。若 token 仍为 0，先查环境变量是否在同一终端、`AGENT_ENABLE_QWEN35_FLASH` 是否为 `1`、模型触发条件是否没有命中。
+
+```powershell
+cd D:\竞赛\demo
+C:\Users\20689\miniconda3\Scripts\conda.exe run -n mus-tread python calc_monthly_income.py
+```
+
+5. **完整 31 天评测**：短测通过后再跑完整仿真，记录无模型 vs 启用 Qwen 的总净收入、总罚分、D009/D010 罚分、运行时间、token 用量和模型调用次数。
 
 需要注意：
 
@@ -221,7 +249,7 @@ C:\Users\20689\miniconda3\Scripts\conda.exe run -n mus-tread python -m compileal
 2. **通用家事执行器**：优化 `_family_action()` 与 `_evaluate_cargo()`，用 `home_deadline_minute`、pickup wait、stay window 做通用约束；确保偏好可见后不再查询货源、不再接会覆盖家事窗口的订单。
 3. **D009 home_night**（罚分 9,000）：10 次 23:00 前未到家。核心问题是白天接远单后赶不回家。当前 home_night 约束效果有限，需要更强的白天定位策略（如下午主动 reposition 回家方向）。
 4. **每日连续休息**：D001(1,200)、D002(1,600)、D006(1,200)、D008(2,400)、D010(600) 仍有罚分。检查休息是否被查询耗时切碎。
-5. **用真实 API key 验证 Qwen3.5-Flash**。先跑 `--max-steps 200`，确认日志中有模型调用，再跑 31 天完整评测。
+5. **用真实 API key 验证 Qwen3.5-Flash**。`.env.local` 格式已检查通过；合规修复后按上面的真实 key 验证计划先跑 `--max-steps 200`，确认日志中有模型调用和 token > 0，再跑 31 天完整评测。
 
 ### 已知问题
 

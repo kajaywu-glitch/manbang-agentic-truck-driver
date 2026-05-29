@@ -44,7 +44,8 @@ cd D:\竞赛
 
 尚未完成：
 
-- 需要用真实 API key 跑 `AGENT_ENABLE_QWEN35_FLASH=1` 的短测。
+- 本机 `.env.local` 已由用户填写真实 key，格式脱敏检查通过；该文件被 Git 忽略，不能提交。
+- 需要在删除 D010 hardcode 后，用真实 key 跑 `AGENT_ENABLE_QWEN35_FLASH=1` 的短测。
 - 需要比较“不开模型”和“启用 Qwen”的完整 31 天结果、token 与耗时。
 
 ## Hybrid Agent 启动标准
@@ -127,6 +128,32 @@ D:\竞赛\demo\results\
 - 连续休息：把休息判断尽量前移到查询货源之前，避免 `query_cargo` 消耗时间切碎休息窗口。
 - Qwen 验证：用真实 key 跑短测和完整评测，记录 token、耗时、收益、罚分与无模型基线差异。
 - 空驶：`state_tracker.market_heat` 目前不是跨步持久记忆。若继续使用市场热度，需要在 Planner 实例中增加安全缓存，并控制 home-night 司机的远距离空驶。
+
+## 真实 Key 验证流程
+
+必须先确保没有 `driver_id` hardcode，再验证 Qwen：
+
+```powershell
+cd D:\竞赛
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\scripts\load_local_env.ps1
+```
+
+短测：
+
+```powershell
+cd D:\竞赛\demo\server
+C:\Users\20689\miniconda3\Scripts\conda.exe run -n mus-tread python main.py --max-steps 200
+```
+
+收益与 token 检查：
+
+```powershell
+cd D:\竞赛\demo
+C:\Users\20689\miniconda3\Scripts\conda.exe run -n mus-tread python calc_monthly_income.py
+```
+
+短测通过标准：无崩溃、无 `validation_error`、日志有模型调用、`monthly_income_202603.json` 中 token 大于 0。之后再跑完整 31 天，并和不开 Qwen 的基线对比。
 
 ## 验证命令
 
