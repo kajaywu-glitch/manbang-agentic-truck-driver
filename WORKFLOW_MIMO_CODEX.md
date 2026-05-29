@@ -1,5 +1,9 @@
 # Mimo + Codex 协作工作流
 
+最后更新：2026-05-29 16:43 +08:00
+
+本次更新：把 `mimo/fix-d010-family-task` 的审阅状态改为已合并到 `main@ec2f92c`，更新给 Mimo/Codex 的下一轮操作口令，并要求文档更新必须带时间戳。
+
 这份文档给 Mimo、Claude Code、Codex 和用户共同使用。目标是让 Mimo 可以持续构建，Codex 可以随时审阅，而不会互相覆盖代码或把未验证改动直接推到 `main`。
 
 ## 先读顺序
@@ -141,6 +145,8 @@ git -C D:\竞赛 push -u origin mimo/任务名
 希望 Codex 审阅重点：
 ```
 
+每次改文档时，必须同步写明更新时间和本次更新内容；如果某段旧结论已经被新提交修正，要删除或明确标记为历史记录，不要让下一位模型误以为仍是当前状态。
+
 ## Codex 审阅流程
 
 用户可以这样叫 Codex：
@@ -172,12 +178,13 @@ git diff main...HEAD
 - D009 home-night、D010 家事、连续休息、必访点、熟货等高罚分规则是否更好。
 - 是否运行了足够验证。
 
-当前 `mimo/fix-d010-family-task` 的审阅结论：
+当前 `mimo/fix-d010-family-task` 的审阅与合并结论（截至 2026-05-29 16:43 +08:00）：
 
-- 不建议原样合并到 `main`。
-- 阻塞点：`demo/agent/planner.py` 中按 `driver_id == "D010"` 注入家事规则，违反赛题约束。
-- 已验证：D010 家事偏好在 2026-03-10 10:00 后会通过 `get_driver_status()` 出现在运行时 `preferences` 中，现有 `parse_preferences()` 能解析出 `FamilyTask`。下一步应删除 hardcode，改成通用运行时偏好路径。
-- 该分支的无模型结果虽然把 D010 罚分降到 2,245，但 D009 罚分升到 9,000、总收益下降，必须逐司机对比后再决定是否吸收其中的通用逻辑。
+- 截至 2026-05-29 16:43 +08:00，该分支最新提交 `ec2f92c` 已删除 D010 `driver_id` hardcode，并已 fast-forward 合并到 `main`。
+- 已验证：D010 家事偏好在 2026-03-10 10:00 后会通过 `get_driver_status()` 出现在运行时 `preferences` 中，现有 `parse_preferences()` 能解析出 `FamilyTask`。
+- Codex 已检查 `demo/agent`，未发现 D010 hardcode 残留，也未发现决策代码直读 `cargo_dataset.jsonl` / `drivers.json`。
+- `compileall` 通过；确定性 `--max-steps 200` 短测通过。完整 31 天确定性基线需要在 `main@ec2f92c` 上重跑。
+- 删除 hardcode 前的旧 31 天结果只能作为历史对比，不再作为可合并成绩。
 
 Codex 如果只给审阅意见，不直接改 Mimo 分支。若需要修复，另开分支：
 
@@ -429,14 +436,14 @@ git -C D:\竞赛 push origin main
 
 ## 给用户的最短操作口令
 
-让 Mimo 继续当前分支：
+让 Mimo 开始下一轮优化（口令更新时间：2026-05-29 16:43 +08:00）：
 
 ```text
-请先阅读 D:\竞赛\WORKFLOW_MIMO_CODEX.md、D:\竞赛\CLAUDE.md 和 D:\竞赛\demo\agent\README.md。当前分支如果是 mimo/fix-d010-family-task，请优先删除 D010 driver_id hardcode，改成基于运行时 preferences 的通用家事处理；重新跑 compileall、31 天仿真和收益计算。完成后 push 并写交接说明。
+请先阅读 D:\竞赛\WORKFLOW_MIMO_CODEX.md、D:\竞赛\CLAUDE.md 和 D:\竞赛\demo\agent\README.md。当前 main 已合并 ec2f92c，D010 driver_id hardcode 已删除。请从最新 main 新建分支，先重跑确定性 31 天基线并计算收益；随后优先实现 Risk-Gated MPC、内置 AGENT_PROGRESS_STDERR 进度输出、D009/D010 通用高罚分约束优化，以及稀疏 Qwen 顾问触发收紧。完成后 push 并写清验证结果。
 ```
 
-让 Codex 审阅：
+让 Codex 审阅（口令更新时间：2026-05-29 16:43 +08:00）：
 
 ```text
-请审阅 origin/mimo/fix-d010-family-task 的最新改动，按 WORKFLOW_MIMO_CODEX.md 的审阅规则检查是否仍有 hardcode、结果是否可信，以及是否可以合并。
+请审阅 Mimo 新分支的最新改动，按 WORKFLOW_MIMO_CODEX.md 的审阅规则检查是否违反赛题约束、是否有 hardcode、结果是否可信、Qwen 调用是否受控，以及是否可以合并。
 ```

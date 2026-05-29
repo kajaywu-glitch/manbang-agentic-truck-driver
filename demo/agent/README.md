@@ -1,5 +1,9 @@
 # Agent 实现说明
 
+最后更新：2026-05-29 16:43 +08:00
+
+本次更新：同步 `main@ec2f92c` 状态，说明 D010 hardcode 已删除并合并，旧 31 天结果仅作历史对比，下一步先重跑合并后基线再做 Risk-Gated MPC 和 Qwen 受控验证。
+
 本目录是当前比赛项目的主要修改面。官方入口仍是 `ModelDecisionService.decide(driver_id)`，外部评测进程会注入 `SimulationApiPort`。
 
 ## 当前架构
@@ -34,7 +38,7 @@ cd D:\竞赛
 
 ## Qwen3.5-Flash 集成状态
 
-当前分支已完成主流程接入：
+当前主线 `main@ec2f92c` 已完成主流程接入：
 
 - `preference_hints()` 会请求结构化偏好，`apply_qwen_hints()` 只允许新增或收紧规则。
 - `rank_cargos()` 可对候选货源给模型评分，并与确定性分数融合。
@@ -88,9 +92,9 @@ Hybrid 第一版只做受控接入：
 7. 同时生成等待候选和保守空驶候选。
 8. 选择最高分合法动作；启用 Qwen 且命中复审条件时让模型在本地候选中选 index；异常时由入口兜底为 `wait(60)`。
 
-## 当前完整评测
+## 当前完整评测（截至 2026-05-29 16:43 +08:00）
 
-最近已计算的 31 天结果来自 `mimo/fix-d010-family-task` 的无模型运行，结果文件在本地忽略目录：
+最近已计算的 31 天结果来自删除 D010 hardcode 前的旧分支无模型运行，结果文件在本地忽略目录：
 
 ```text
 D:\竞赛\demo\results\
@@ -104,15 +108,15 @@ D:\竞赛\demo\results\
 - `total_net_income_all_drivers = 115570.25`
 - `total_preference_penalty = 16945`
 
-注意：此前该分支因 `planner.py` 中按 `driver_id == "D010"` 硬编码注入 `FamilyTask` 而不能合并。**2026-05-29 已删除该 hardcode**，家事逻辑现完全基于运行时 `preferences` 解析。需重跑 31 天确认无回归后可合并。
+截至 2026-05-29 16:43 +08:00，此前的 `driver_id == "D010"` 硬编码注入 `FamilyTask` 已删除，并已合并到 `main`。家事逻辑现完全基于运行时 `preferences` 解析。合并后需重跑 31 天确认新基线。
 
 罚分集中点：
 
 - D009：每日 23 点前到家 10 次违规，罚分 9,000，净收入仅 514。
-- D010：家事罚分 1,645 + 休息 600，净收入 -6,567；当前低罚分来自违规 hardcode，需合规重做。
+- D010：旧结果中家事罚分 1,645 + 休息 600，净收入 -6,567；该结果来自删除 hardcode 前的旧分支，只能作为历史对比。当前 `main` 需重跑确认合规结果。
 - D001/D002/D006/D008/D010：连续休息仍有罚分；D008 另有 1 次食品饮料软偏好罚分。
 
-## 当前审阅阻塞点
+## 合并后剩余风险（截至 2026-05-29 16:43 +08:00）
 
 - ~~`planner.py` 不能保留 `if driver_id == "D010"` 这类策略分支~~ **2026-05-29 已解决**，hardcode 已删除。
 - D010 家事偏好并非完全不可见：在 2026-03-10 10:00 后，`get_driver_status()` 会把该偏好放入 `preferences`，现有 `parse_preferences()` 能解析出 `FamilyTask`。
@@ -120,8 +124,9 @@ D:\竞赛\demo\results\
 - `_family_action()` 后续应使用 `home_deadline_minute` 判断 22:00 前进家门的风险，而不是只等到 `stay_until_minute`。
 - 家事、home-night、连续休息都应尽量在 `query_cargo` 前返回动作，避免查询货源消耗仿真时间后再补救。
 
-## 下一步修改入口
+## 下一步修改入口（截至 2026-05-29 16:43 +08:00）
 
+- 基线：先在 `main@ec2f92c` 重跑确定性完整 31 天和收益计算，得到合规新基线。
 - D010：~~先删除 hardcode~~ 已完成。下一步加强 `_family_action()` 使用 `home_deadline_minute` 做紧迫性判断，重新验证 D010 家事 sequence、到家时长和收益。
 - D009：继续定位未回家日期，避免远距离接单/空驶导致 23 点前无法回家；注意不要因为修 D010 让 D009 继续恶化。
 - 必访点：`planner._urgent_action()` 中 required visit 逻辑需要更早安排，不能只在剩余天数紧张时抢救。
@@ -162,7 +167,7 @@ $env:AGENT_PROGRESS_EVERY_STEPS = "1"
 
 ## 真实 Key 验证流程
 
-必须先确保没有 `driver_id` hardcode，再验证 Qwen：
+当前已确保没有 D010 `driver_id` hardcode；验证 Qwen 前先限制调用次数：
 
 ```powershell
 cd D:\竞赛

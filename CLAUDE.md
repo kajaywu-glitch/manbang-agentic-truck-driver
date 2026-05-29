@@ -1,18 +1,24 @@
 # Claude/Codex 项目交接说明
 
+最后更新：2026-05-29 16:43 +08:00
+
+本次更新：记录 `mimo/fix-d010-family-task` 已合并到 `main@ec2f92c`，清理旧审阅状态，补充合并后短测结果和下一轮迭代计划。
+
 这份文档是给下一次接手的模型优先阅读的项目状态说明。目标是让新会话不用重新摸索环境、赛题约束和当前策略问题，就能直接继续修改 `demo/agent/`。
 
 **重要：先读 `D:\竞赛\WORKFLOW_MIMO_CODEX.md` 了解协作工作流和分支规则，再读本文档。**
 
-## 当前结论
+## 当前结论（截至 2026-05-29 16:43 +08:00）
 
 - 仓库：`D:\竞赛`
 - 远程：`https://github.com/kajaywu-glitch/manbang-agentic-truck-driver.git`
-- 当前工作分支：`mimo/fix-d010-family-task`
-- 当前 Agent 已能完整跑 31 天本地仿真，最新已计算结果无崩溃、无 `validation_error`、10 名司机都有动作日志。
-- 当前策略仍不是最终版：`mimo/fix-d010-family-task` 的无模型结果总净收入 `115,570.25`，总偏好罚分 `16,945`，但该结果来自含阻塞问题的分支，不能直接作为可合并成绩。
+- 当前稳定分支：`main`
+- 已合并分支：`mimo/fix-d010-family-task`
+- 当前同步点：`ec2f92c fix: remove D010 driver_id hardcode, use runtime preferences for family task`
+- 当前 Agent 已能跑通本地仿真短测；合并后已通过 `compileall` 和确定性 `--max-steps 200`。完整 31 天确定性基线需要在合并后重新跑一次。
+- 历史 31 天无模型结果：总净收入 `115,570.25`，总偏好罚分 `16,945`。注意该结果来自删除 D010 hardcode 前的旧分支，只能作为参考，不作为合并后成绩。
 - 当前主路径是确定性滚动规划；`qwen3.5-flash` 已集成到 `planner.py` 主决策流程（rank_cargos、suggest_decision、apply_qwen_hints），但默认不启用（需设置 `AGENT_ENABLE_QWEN35_FLASH=1`）。
-- Codex 审阅结论：`mimo/fix-d010-family-task` 原先不建议合并，主要阻塞点是 `planner.py` 中按 `driver_id == "D010"` 硬编码家事规则。**2026-05-29 已删除该 hardcode**，家事逻辑现完全基于运行时 `preferences` 解析。
+- Codex 审阅结论（2026-05-29 16:43 +08:00）：`mimo/fix-d010-family-task` 的原阻塞点是 `planner.py` 中按 `driver_id == "D010"` 硬编码家事规则。该 hardcode 已删除，并已 fast-forward 合并到 `main`；家事逻辑现完全基于运行时 `preferences` 解析。
 
 ## Windows 环境
 
@@ -95,9 +101,9 @@ set AGENT_ENABLE_QWEN35_FLASH=1
 - 禁止按 `driver_id` 写死策略；可以解析运行时返回的 `preferences` 文本并生成通用规则。
 - 做完代码修改后至少运行一次 `compileall`，重要策略改动后跑 31 天仿真并计算收益。
 
-## 本轮审阅发现（2026-05-29）
+## 合并后审阅结论（2026-05-29）
 
-这些是 `mimo/fix-d010-family-task` 相对 `main` 的审阅结论，给下一位模型优先处理。
+这些是 `mimo/fix-d010-family-task` 合并到 `main` 后的结论，给下一位模型优先处理。
 
 ### ~~阻塞问题~~（2026-05-29 已解决）
 
@@ -107,7 +113,7 @@ set AGENT_ENABLE_QWEN35_FLASH=1
 
 ### 需要优化的代码方向
 
-1. **D010 家事修复必须通用化**：删除 `driver_id` 分支，只依赖 `status["preferences"]` -> `parse_preferences()` 得到的 `family_task`。如果需要测试，写基于偏好文本的单元/调试脚本，不把司机号写进策略。
+1. **D010 家事修复已通用化，但还要验证完整成绩**：`driver_id` 分支已删除，当前只依赖 `status["preferences"]` -> `parse_preferences()` 得到的 `family_task`。下一步不要再写司机号分支；如需测试，写基于偏好文本的单元/调试脚本。
 2. **家事动作应使用 deadline**：`_family_action()` 现在只看 `start_minute` 和 `stay_until_minute`，没有利用 `home_deadline_minute` 做“最晚回家”判断。应在可见家事偏好后立即评估：先接配偶，再回家；如果距离导致 22:00 前回家风险高，禁止查询货源和接单，直接执行家事路径。
 3. **家事窗口内禁止查询货源**：家事、回家、连续休息这类硬约束应在 `query_cargo` 前完成决策，避免查询耗时切碎连续等待或造成迟到。
 4. **接单评估要避免覆盖未来已知硬约束**：如果 `family_task` 已经可见，`_evaluate_cargo()` 需要拒绝会延伸到接人、回家或 stay 窗口内的订单；但不能用隐藏的原始数据提前预知未来偏好。
@@ -180,7 +186,7 @@ set AGENT_ENABLE_QWEN35_FLASH=1
 
 验收状态：
 
-- [x] 不设置 key 时短测和 31 天评测仍能跑通。
+- [ ] 真正无 key 的短测/31 天评测仍需修正服务端配置校验后再确认。当前即使关闭 Qwen，`demo/server/bench/settings.py` 仍要求 `DASHSCOPE_API_KEY` 或 `TIANCHI_MODEL_API_KEY` 存在；确定性测试可用 dummy key 仅绕过配置校验，模型 token 仍为 0。
 - [x] 本机 `D:\竞赛\.env.local` 已配置真实 key，`scripts/load_local_env.ps1` 脱敏检查通过：`key_present=True`、key 形态为 `sk-...`、`.env.local` 被 Git 忽略。不要把 key 写入任何提交或文档。
 - [ ] 设置 `AGENT_ENABLE_QWEN35_FLASH=1` 后，日志能看到真实模型调用。
 - [ ] `monthly_income_202603.json` 中 token 用量不再全为 0。
@@ -223,7 +229,7 @@ C:\Users\20689\miniconda3\Scripts\conda.exe run -n mus-tread python calc_monthly
 
 ## 最近完整评测
 
-最近已计算结果位于被 `.gitignore` 忽略的本地目录：
+最近已计算结果位于被 `.gitignore` 忽略的本地目录。注意：下列结果来自删除 D010 hardcode 前的旧分支，仅用于定位问题和做历史对比；`main@ec2f92c` 合并后需要重跑 31 天确定性基线。
 
 ```text
 D:\竞赛\demo\results\
@@ -271,11 +277,13 @@ C:\Users\20689\miniconda3\Scripts\conda.exe run -n mus-tread python -m compileal
 
 结果：通过。
 
-## 本轮改动（2026-05-29）
+## 本轮改动与合并状态（2026-05-29）
 
 **分支**：`mimo/fix-d010-family-task`
 
 **已修改文件**：`demo/agent/planner.py`（删除 14 行 D010 hardcode）
+
+**合并状态**：已 fast-forward 合并到 `main`，当前同步点为 `ec2f92c`。
 
 **改动内容**：
 - 删除 `planner.py` 中 `if driver_id == "D010"` 硬编码注入 `FamilyTask` 的代码块（原第 87-100 行）。
@@ -286,23 +294,24 @@ C:\Users\20689\miniconda3\Scripts\conda.exe run -n mus-tread python -m compileal
 - 调试脚本确认：D010 的 `preferences` 在仿真 API 中按 `start_time`/`end_time` 时间窗过滤返回；`_parse_family_task()` 能正确解析出 `FamilyTask(start_minute=13560, home_deadline_minute=14280, stay_until_minute=18600)`。
 - 修正了原 hardcode 中 `home_deadline_minute=17880` 的错误，运行时正确值为 `14280`。
 
-**31 天仿真**：已启动但用户要求暂停，待 Codex 审阅后再跑。
+**31 天仿真**：合并后尚未重跑。下一步先跑确定性完整 31 天，再计算收益并记录新基线。
 
-**Codex 审阅重点**：
-1. 确认 `planner.py` 中不再有任何 `driver_id` 判断逻辑。
-2. 确认 `_family_action()` + `_evaluate_cargo()` 的家事保护在偏好可见后生效。
-3. 评估是否需要进一步使用 `home_deadline_minute` 做紧迫性判断。
+**Codex 已审阅**：
+1. `planner.py` 中未发现 D010 hardcode 残留。
+2. `demo/agent` 未发现直读 `cargo_dataset.jsonl` / `drivers.json` 的决策代码。
+3. `compileall` 通过；确定性 `--max-steps 200` 通过。
+4. 剩余优化点：`home_deadline_minute` 仍应进入 `_family_action()` 紧迫性判断；Qwen 调用频率需要收紧；完整 31 天需要重跑。
 
 ## 下一步优先级
 
 ### 高优先级
 
-1. ~~**移除 D010 hardcode**~~ **已完成**：`driver_id == "D010"` 注入已删除，运行时 `preferences` 解析验证通过。下一步需跑完整 31 天确认无回归。
+1. **重跑合并后确定性 31 天基线**：`driver_id == "D010"` 注入已删除并合并到 `main`。先用 Qwen 关闭、dummy 或真实 key 仅满足配置校验，跑完整 31 天并计算收益，得到新的可信基线。
 2. **通用家事执行器**：优化 `_family_action()` 与 `_evaluate_cargo()`，用 `home_deadline_minute`、pickup wait、stay window 做通用约束；确保偏好可见后不再查询货源、不再接会覆盖家事窗口的订单。
 3. **D009 home_night**（罚分 9,000）：10 次 23:00 前未到家。核心问题是白天接远单后赶不回家。当前 home_night 约束效果有限，需要更强的白天定位策略（如下午主动 reposition 回家方向）。
 4. **每日连续休息**：D001(1,200)、D002(1,600)、D006(1,200)、D008(2,400)、D010(600) 仍有罚分。检查休息是否被查询耗时切碎。
 5. **内置实时进度显示**：实现 `AGENT_PROGRESS_STDERR=1` heartbeat，启动仿真时实时看到 driver/step/仿真时间/action/token，避免长时间黑箱等待。
-6. **用真实 API key 验证 Qwen3.5-Flash**。`.env.local` 格式已检查通过；合规修复后按上面的真实 key 验证计划先跑 `--max-steps 200`，确认日志中有模型调用和 token > 0，再跑 31 天完整评测。
+6. **用真实 API key 受控验证 Qwen3.5-Flash**。`.env.local` 格式已检查通过；按上面的真实 key 验证计划先跑 `--max-steps 200`，确认日志中有模型调用和 token > 0。完整 Qwen 31 天必须等调用触发条件收紧后再跑。
 
 ### 已知问题
 
@@ -376,6 +385,7 @@ cd D:\竞赛
 ## Git 工作流
 
 - 当前要求是每轮有效改动后 commit 并 push 到 GitHub。
+- 每次更新文档时，必须在对应文档顶部或变更记录中写明更新时间和本次更新内容，避免下一个模型误读过时状态。
 - 提交前检查：
 
 ```powershell
