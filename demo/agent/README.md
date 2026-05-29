@@ -1,8 +1,8 @@
 # Agent 实现说明
 
-最后更新：2026-05-29 19:20 +08:00
+最后更新：2026-05-29 19:42 +08:00
 
-本次更新：记录 `mimo/risk-gated-mpc` 分支实现 Risk-Gated MPC、内置进度显示、Qwen 触发收紧和高罚分约束优化。短测因 Qwen 调用耗时过长超时，需 Codex 审阅后继续迭代。
+本次更新：记录 `mimo/risk-gated-mpc@0476fb1` 已经 Codex 审查并补充 Qwen 限流修正：`max_tokens`、rank 候选数 5、默认 `AGENT_QWEN_MAX_REVIEWS=20`、家事 deadline 修正。下一步先完整确定性基线，再做低额度真实 Qwen 短测和评测进度面板。
 
 本目录是当前比赛项目的主要修改面。官方入口仍是 `ModelDecisionService.decide(driver_id)`，外部评测进程会注入 `SimulationApiPort`。
 
@@ -44,6 +44,7 @@ cd D:\竞赛
 - `rank_cargos()` 可对候选货源给模型评分，并与确定性分数融合。
 - `suggest_decision()` 可在高风险或分数接近时从本地候选动作中选择 index。
 - `AGENT_QWEN_MAX_REVIEWS` 控制模型调用次数，默认值见 `planner.py`。
+- 截至 2026-05-29 19:42 +08:00，Qwen payload 已设置 `max_tokens`，`rank_cargos()` 只给前 5 个候选；真实 key 测试必须先从 `AGENT_QWEN_MAX_REVIEWS=5` 开始，不要直接完整 31 天。
 - 模型失败、超时、坏 JSON 或越界 index 时，必须回退确定性策略。
 
 尚未完成：
@@ -126,12 +127,13 @@ D:\竞赛\demo\results\
 
 ## 下一步修改入口（截至 2026-05-29 16:43 +08:00）
 
-- 基线：先在 `main@ec2f92c` 重跑确定性完整 31 天和收益计算，得到合规新基线。
+- 基线（更新于 2026-05-29 19:42 +08:00）：先在合并后的 `main` 重跑确定性完整 31 天和收益计算，得到 Risk-Gated MPC 后的新基线。
 - D010：~~先删除 hardcode~~ 已完成。下一步加强 `_family_action()` 使用 `home_deadline_minute` 做紧迫性判断，重新验证 D010 家事 sequence、到家时长和收益。
 - D009：继续定位未回家日期，避免远距离接单/空驶导致 23 点前无法回家；注意不要因为修 D010 让 D009 继续恶化。
 - 必访点：`planner._urgent_action()` 中 required visit 逻辑需要更早安排，不能只在剩余天数紧张时抢救。
 - 连续休息：把休息判断尽量前移到查询货源之前，避免 `query_cargo` 消耗时间切碎休息窗口。
-- Qwen 验证：用真实 key 跑短测和完整评测，记录 token、耗时、收益、罚分与无模型基线差异。
+- Qwen 验证：用真实 key 先跑低额度短测，记录 token、耗时、收益、罚分与无模型基线差异；只有 token 和耗时可控，才允许扩大步数。
+- 进度显示：下一轮要从普通 heartbeat 升级为评测进度面板，显示当前司机、当前仿真日期、已完成司机、累计 token、是否正在等待模型、已完成司机阶段摘要。
 - 空驶：`state_tracker.market_heat` 目前不是跨步持久记忆。若继续使用市场热度，需要在 Planner 实例中增加安全缓存，并控制 home-night 司机的远距离空驶。
 
 ## 下一轮算法策略

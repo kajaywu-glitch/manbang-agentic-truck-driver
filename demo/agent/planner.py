@@ -75,7 +75,7 @@ class DeterministicPlanner:
         self._logger = logging.getLogger("agent.planner")
         self._qwen = QwenFlashHelper(api)
         self._qwen_review_count = 0
-        self._qwen_max_reviews = int(os.environ.get("AGENT_QWEN_MAX_REVIEWS", "100"))
+        self._qwen_max_reviews = int(os.environ.get("AGENT_QWEN_MAX_REVIEWS", "20"))
 
     def decide(self, driver_id: str) -> dict[str, Any]:
         status = self._api.get_driver_status(driver_id)
@@ -302,14 +302,13 @@ class DeterministicPlanner:
         if now_minute >= family.stay_until_minute:
             return None
 
-        # home_deadline 紧迫性检查：如果距 deadline 不足，立即回家
-        if not at_home and family.home_deadline_minute > 0:
+        # home_deadline 紧迫性检查：接到人后如果 deadline 紧张，立即回家。
+        # 未接配偶时仍必须先接人，否则会触发更高的固定罚分。
+        if pickup_done and not at_home and family.home_deadline_minute > 0:
             dist_home = haversine_km(lat, lng, family.home_lat, family.home_lng)
             travel_home = distance_to_minutes(dist_home)
             time_to_deadline = family.home_deadline_minute - now_minute
-            # 如果回家路上时间 + 30分钟缓冲 >= 距 deadline 时间，立即回家
-            if time_to_deadline <= travel_home + 30 and not pickup_done:
-                # 先去接人再回家已来不及，直接回家避免最大罚分
+            if time_to_deadline <= travel_home + 30:
                 return {"action": "reposition", "params": {"latitude": family.home_lat, "longitude": family.home_lng}}
 
         # 永远先接配偶（跳过会导致 9000 固定罚分，远比迟到罚分严重）
@@ -436,11 +435,11 @@ class DeterministicPlanner:
         # Qwen3.5-Flash 货源评分融合 — 只在高风险或候选不确定时触发
         should_rank = False
         if self._qwen.enabled and evaluated_plans and self._qwen_review_count < self._qwen_max_reviews:
-            # 高风险场景：home-night、家事、休息、必访点、熟货
+            # 高风险场景：home-night、家事、必访点、熟货。
+            # 连续休息由本地规则处理，不单独触发模型货源 rerank。
             has_risk = (
                 policy.home_night is not None
                 or policy.family_task is not None
-                or policy.daily_rest_minutes > 0
                 or policy.required_visits
                 or policy.required_cargo is not None
             )
@@ -448,7 +447,7 @@ class DeterministicPlanner:
             if len(evaluated_plans) >= 2:
                 scores_sorted = sorted([p.score for _, p in evaluated_plans], reverse=True)
                 gap = scores_sorted[0] - scores_sorted[1]
-                uncertain = gap < max(30, abs(scores_sorted[0]) * 0.25)
+                uncertain = gap < max(15, abs(scores_sorted[0]) * 0.10)
             else:
                 uncertain = False
             should_rank = has_risk and uncertain

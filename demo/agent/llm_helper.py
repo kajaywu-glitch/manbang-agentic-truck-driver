@@ -55,6 +55,8 @@ class QwenFlashHelper:
         }
         payload = {
             "model": QWEN_FLASH_MODEL,
+            "temperature": 0,
+            "max_tokens": 192,
             "messages": [
                 {
                     "role": "system",
@@ -97,8 +99,8 @@ class QwenFlashHelper:
         if not self.enabled or not cargos:
             return {}
 
-        # 限制候选数量，避免 prompt 过长
-        top_cargos = cargos[:20]
+        # 限制候选数量，避免 prompt 过长和模型长时间推理。
+        top_cargos = cargos[:5]
 
         cargo_summaries = []
         for c in top_cargos:
@@ -134,6 +136,8 @@ class QwenFlashHelper:
 
         payload = {
             "model": QWEN_FLASH_MODEL,
+            "temperature": 0,
+            "max_tokens": 192,
             "messages": [
                 {
                     "role": "system",
@@ -210,6 +214,8 @@ class QwenFlashHelper:
 
         payload = {
             "model": QWEN_FLASH_MODEL,
+            "temperature": 0,
+            "max_tokens": 96,
             "messages": [
                 {
                     "role": "system",

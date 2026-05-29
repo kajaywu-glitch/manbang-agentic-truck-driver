@@ -1,29 +1,30 @@
 # Claude/Codex 项目交接说明
 
-最后更新：2026-05-29 19:20 +08:00
+最后更新：2026-05-29 19:42 +08:00
 
-本次更新：记录 `mimo/risk-gated-mpc` 分支已创建并推送，实现 Risk-Gated MPC、内置进度显示、Qwen 触发收紧和高罚分约束优化。短测因 Qwen 调用耗时过长超时，需 Codex 审阅后继续迭代。
+本次更新：记录 Codex 对 `mimo/risk-gated-mpc@0476fb1` 的审查结论和修正：补充 Qwen 输出限长、降低默认调用上限、缩小 rank 候选数、修正 D010 family deadline 路径，并明确下一轮目标是完整确定性基线、低额度 Qwen 短测和评测进度显示。
 
 这份文档是给下一次接手的模型优先阅读的项目状态说明。目标是让新会话不用重新摸索环境、赛题约束和当前策略问题，就能直接继续修改 `demo/agent/`。
 
 **重要：先读 `D:\竞赛\WORKFLOW_MIMO_CODEX.md` 了解协作工作流和分支规则，再读本文档。**
 
-## 当前结论（截至 2026-05-29 19:20 +08:00）
+## 当前结论（截至 2026-05-29 19:42 +08:00）
 
 - 仓库：`D:\竞赛`
 - 远程：`https://github.com/kajaywu-glitch/manbang-agentic-truck-driver.git`
 - 当前稳定分支：`main`
-- 当前工作分支：`mimo/risk-gated-mpc`
-- 已合并分支：`mimo/fix-d010-family-task`
+- 当前审查分支：`mimo/risk-gated-mpc`
+- 已合并分支：`mimo/fix-d010-family-task`、`mimo/risk-gated-mpc`
 - 当前同步点：`ec2f92c fix: remove D010 driver_id hardcode, use runtime preferences for family task`
 - 历史 31 天无模型结果：总净收入 `115,570.25`，总偏好罚分 `16,945`。注意该结果来自删除 D010 hardcode 前的旧分支，只能作为参考，不作为合并后成绩。
 - 当前主路径是确定性滚动规划；`qwen3.5-flash` 已集成到 `planner.py` 主决策流程（rank_cargos、suggest_decision、apply_qwen_hints），但默认不启用（需设置 `AGENT_ENABLE_QWEN35_FLASH=1`）。
-- 本轮 `mimo/risk-gated-mpc` 已实现 Risk-Gated MPC、内置进度显示、Qwen 触发收紧和高罚分约束优化，但短测因 Qwen 调用耗时过长超时（20 步约 5 分钟），需 Codex 审阅后继续迭代。
+- 本轮 `mimo/risk-gated-mpc` 已实现 Risk-Gated MPC、内置进度显示、Qwen 触发收紧和高罚分约束优化。Codex 审查发现 0476fb1 仍会高频长输出调用 Qwen，已补充限长和进一步收紧；关闭 Qwen 的 `--max-steps 50` 通过，完整 31 天仍待重跑。
 
-## 本轮改动（mimo/risk-gated-mpc，2026-05-29 19:20 +08:00）
+## 本轮改动与审查修正（mimo/risk-gated-mpc，2026-05-29 19:42 +08:00）
 
 分支：`mimo/risk-gated-mpc`
-最新 commit：待提交
+Mimo 最新 commit：`0476fb1 feat: implement Risk-Gated MPC, progress display, Qwen trigger tightening`
+Codex 审查修正：见 `0476fb1` 之后的最新提交。
 
 本轮目标：
 1. 实现 Risk-Gated MPC 硬约束检查
@@ -59,21 +60,22 @@
 
 验证结果：
 - `compileall` 通过
-- `--max-steps 200` 短测因 Qwen 调用耗时过长超时（20 步约 5 分钟）
-- 问题：Qwen 调用仍然过于频繁，每步约 30-50 秒
+- 0476fb1 的 Qwen 短测仍过慢：从 2026-05-29 19:08 开始的验证在 D001 内产生约 48 次模型调用、约 298k token，其中 reasoning token 约 248k；Codex 已停止该验证进程以避免继续消耗额度。
+- Codex 修正后，关闭 Qwen 的 `--max-steps 50` 通过，token 为 0。
 
 当前收益/罚分变化：
 - 尚未完成完整 31 天评测，无法对比
 
 仍未解决：
-- Qwen 调用耗时过长，需要进一步收紧触发条件或降低 MAX_REVIEWS
-- 需要跑完整 31 天确定性基线（不启用 Qwen）来对比
+- 需要跑完整 31 天确定性基线（不启用 Qwen）来对比。
+- 需要用真实 key 做低额度 Qwen 短测：`AGENT_QWEN_MAX_REVIEWS=5` 起步，先跑 `--max-steps 50/100`，确认 `max_tokens` 是否有效压住 completion/reasoning token。
+- 当前内置 heartbeat 只显示 driver/step/sim/action/qwen_reviews/elapsed；下一轮要补成用户需要的评测进度：当前司机、当前仿真日期、已完成司机、总步数/最大步数、累计 token、是否正在等待模型、已完成司机的阶段摘要。
 
 希望 Codex 审阅重点：
-1. Risk-Gated MPC 实现是否正确，罚分风险估算是否合理
-2. Qwen 触发条件是否足够紧，为什么仍然频繁调用
-3. 内置进度显示是否符合要求（不改变 action JSON、不泄露密钥）
-4. 高罚分约束优化是否可能引入新问题（如 D009/D010 回退）
+1. 完整 31 天确定性基线的新收益/罚分。
+2. Qwen 低额度短测的 token、耗时和 fallback 是否可控。
+3. 评测进度显示是否真正回答“跑到 3 月几号、完成几个司机、阶段结果如何”。
+4. D009 home-night、D010 family、连续休息是否有回退。
 
 ## Windows 环境
 
