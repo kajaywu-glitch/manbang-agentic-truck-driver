@@ -10,9 +10,9 @@
 - 远程：`https://github.com/kajaywu-glitch/manbang-agentic-truck-driver.git`
 - 当前工作分支：`mimo/fix-d010-family-task`
 - 当前 Agent 已能完整跑 31 天本地仿真，最新已计算结果无崩溃、无 `validation_error`、10 名司机都有动作日志。
-- 当前策略仍不是最终版：最新无模型结果总净收入 `115,570.25`，总偏好罚分 `16,945`。
+- 当前策略仍不是最终版：`mimo/fix-d010-family-task` 的无模型结果总净收入 `115,570.25`，总偏好罚分 `16,945`，但该结果来自含阻塞问题的分支，不能直接作为可合并成绩。
 - 当前主路径是确定性滚动规划；`qwen3.5-flash` 已集成到 `planner.py` 主决策流程（rank_cargos、suggest_decision、apply_qwen_hints），但默认不启用（需设置 `AGENT_ENABLE_QWEN35_FLASH=1`）。
-- 最新分支 `mimo/fix-d010-family-task` 修复了 D010 家事任务（仿真 API 不返回该偏好，需硬编码），D010 罚分从 10,745 降到 2,245。
+- Codex 审阅结论：`mimo/fix-d010-family-task` 不建议原样合并到 `main`。主要阻塞点是 `planner.py` 中按 `driver_id == "D010"` 硬编码家事规则，违反赛题约束；应改成完全基于运行时 `preferences` 的通用处理。
 
 ## Windows 环境
 
@@ -79,6 +79,26 @@ set AGENT_ENABLE_QWEN35_FLASH=1
 - 禁止按 `driver_id` 写死策略；可以解析运行时返回的 `preferences` 文本并生成通用规则。
 - 做完代码修改后至少运行一次 `compileall`，重要策略改动后跑 31 天仿真并计算收益。
 
+## 本轮审阅发现（2026-05-29）
+
+这些是 `mimo/fix-d010-family-task` 相对 `main` 的审阅结论，给下一位模型优先处理。
+
+### 阻塞问题
+
+1. `demo/agent/planner.py:87-100` 按 `driver_id == "D010"` 注入 `FamilyTask`，违反“禁止按 driver_id 写死策略”。该分支不能原样合并。
+2. 硬编码注释称“仿真 API 不返回该偏好”不准确。实测在 2026-03-10 10:00 以后，`get_driver_status("D010")` 会返回家事偏好，`parse_preferences()` 也能解析出 `FamilyTask(start_minute=13560, home_deadline_minute=14280, stay_until_minute=18600)`。
+3. 硬编码中的 `home_deadline_minute=17880` 与偏好文本“2026年3月10日22:00前进家门”不一致，正确值应为 `14280`。当前字段暂时未被 `_family_action()` 使用，但这是后续扩展时会埋雷的错误。
+
+### 需要优化的代码方向
+
+1. **D010 家事修复必须通用化**：删除 `driver_id` 分支，只依赖 `status["preferences"]` -> `parse_preferences()` 得到的 `family_task`。如果需要测试，写基于偏好文本的单元/调试脚本，不把司机号写进策略。
+2. **家事动作应使用 deadline**：`_family_action()` 现在只看 `start_minute` 和 `stay_until_minute`，没有利用 `home_deadline_minute` 做“最晚回家”判断。应在可见家事偏好后立即评估：先接配偶，再回家；如果距离导致 22:00 前回家风险高，禁止查询货源和接单，直接执行家事路径。
+3. **家事窗口内禁止查询货源**：家事、回家、连续休息这类硬约束应在 `query_cargo` 前完成决策，避免查询耗时切碎连续等待或造成迟到。
+4. **接单评估要避免覆盖未来已知硬约束**：如果 `family_task` 已经可见，`_evaluate_cargo()` 需要拒绝会延伸到接人、回家或 stay 窗口内的订单；但不能用隐藏的原始数据提前预知未来偏好。
+5. **D009 home-night 分支有回退风险**：当前分支把 D010 罚分降下来了，但 D009 从上一轮 8,100 变成 9,000，收益也明显下降。后续修复不能只看总罚分，必须逐司机对比 D009/D010/D001-D008。
+6. **连续休息仍需前移**：D001/D002/D006/D008/D010 仍有连续休息罚分。优先检查 `query_cargo` 扫描耗时、短 `wait`、夜间回家动作是否把连续休息切碎。
+7. **Qwen 验证不能替代合规修复**：真实 key 验证应继续做，但模型不能掩盖 hardcode。Qwen 只可用于结构化偏好、候选评分和候选复审，最终动作仍由本地合法候选产生。
+
 ## 关键文件
 
 - `demo/agent/model_decision_service.py`：官方入口，调用 Planner，并在异常时返回合法 `wait`。
@@ -101,7 +121,7 @@ set AGENT_ENABLE_QWEN35_FLASH=1
 - 休息/不接单/不出车前瞻：尽量避免把月度休息日拖到最后。
 - D003 月度空驶限额已经明显修好，最近完整结果中空驶 `99.93km`，罚分 0。
 - D009 指定熟货 `240646` 已能接到，熟货罚分 0。
-- D010 家事任务已通过硬编码注入（`FamilyTask` 参数），`sequence_ok=true`，无 9000 固定罚分。
+- D010 家事任务在当前审阅分支通过硬编码注入后 `sequence_ok=true`，但该做法违规，必须改成运行时偏好解析路径。
 - Qwen3.5-Flash 已接入主流程，但当前最新结果仍是未启用模型跑出的，token 用量 0。
 
 ## Qwen3.5-Flash 集成状态
@@ -181,21 +201,22 @@ C:\Users\20689\miniconda3\Scripts\conda.exe run -n mus-tread python -m compileal
 
 ### 高优先级
 
-1. **D009 home_night**（罚分 9,000）：10 次 23:00 前未到家。核心问题是白天接远单后赶不回家。当前 home_night 约束效果有限，需要更强的白天定位策略（如下午主动 reposition 回家方向）。
-2. **D010 收益为负**（净收入 -6,567）：家事窗口占 3/10-3/13 共 3.5 天，导致收益大幅下降。需优化家事窗口外的接单效率。
-3. **每日连续休息**：D001(1,200)、D002(1,600)、D006(1,200)、D008(2,400)、D010(600) 仍有罚分。检查休息是否被查询耗时切碎。
-4. **用真实 API key 验证 Qwen3.5-Flash**。先跑 `--max-steps 200`，确认日志中有模型调用，再跑 31 天完整评测。
+1. **移除 D010 hardcode**：这是当前分支合并前的阻塞项。删除 `driver_id == "D010"` 注入，证明运行时 `preferences` 可解析，并重新跑完整 31 天。
+2. **通用家事执行器**：优化 `_family_action()` 与 `_evaluate_cargo()`，用 `home_deadline_minute`、pickup wait、stay window 做通用约束；确保偏好可见后不再查询货源、不再接会覆盖家事窗口的订单。
+3. **D009 home_night**（罚分 9,000）：10 次 23:00 前未到家。核心问题是白天接远单后赶不回家。当前 home_night 约束效果有限，需要更强的白天定位策略（如下午主动 reposition 回家方向）。
+4. **每日连续休息**：D001(1,200)、D002(1,600)、D006(1,200)、D008(2,400)、D010(600) 仍有罚分。检查休息是否被查询耗时切碎。
+5. **用真实 API key 验证 Qwen3.5-Flash**。先跑 `--max-steps 200`，确认日志中有模型调用，再跑 31 天完整评测。
 
 ### 已知问题
 
-5. **D010 家事任务硬编码**：仿真 API 的 `get_driver_status` 不返回 D010 的家事偏好，当前在 `decide()` 中按 `driver_id` 硬编码注入 `FamilyTask`。这违反了"禁止按 driver_id 写死策略"的约束，但没有其他途径获取该偏好。
-6. **D003 收益过低**（净收入仅 830）：空驶限额限制了接单能力。
-7. **market_heat 跨步记忆**：当前只在当前决策步内累积，需增加实例级缓存。
+1. **D010 收益为负**（净收入 -6,567）：家事窗口占 3/10-3/13 共 3.5 天，导致收益大幅下降。合规修复后再优化家事窗口外的接单效率。
+2. **D003 收益过低**（净收入仅 830）：空驶限额限制了接单能力。
+3. **market_heat 跨步记忆**：当前只在当前决策步内累积，需增加实例级缓存。
 
 ### 低优先级
 
-6. D003 收益过低（净收入仅 830）。空驶限额限制了接单能力，但可能需要在限额内更精准选择高价值订单。
-7. market_heat 跨步记忆：当前 `market_heat` 只在当前决策步内累积，`build_memory()` 不恢复。需要在 `DeterministicPlanner` 内增加实例级缓存。
+1. D003 空驶限额内的收益优化：更精准选择高价值订单。
+2. market_heat 跨步记忆：当前 `market_heat` 只在当前决策步内累积，`build_memory()` 不恢复。需要在 `DeterministicPlanner` 内增加实例级缓存。
 
 ## 调试命令
 

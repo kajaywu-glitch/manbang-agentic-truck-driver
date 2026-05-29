@@ -88,7 +88,7 @@ Hybrid 第一版只做受控接入：
 
 ## 当前完整评测
 
-最近已计算的 31 天结果来自当前分支的无模型运行，结果文件在本地忽略目录：
+最近已计算的 31 天结果来自 `mimo/fix-d010-family-task` 的无模型运行，结果文件在本地忽略目录：
 
 ```text
 D:\竞赛\demo\results\
@@ -99,19 +99,29 @@ D:\竞赛\demo\results\
 - `failed_driver_count = 0`
 - 无 `validation_error`
 - `total_token_usage = 0`
-- `total_net_income_all_drivers = 138156.88`
-- `total_preference_penalty = 25445`
+- `total_net_income_all_drivers = 115570.25`
+- `total_preference_penalty = 16945`
+
+注意：这个结果不能直接作为可合并成绩，因为当前分支为了修 D010 在 `planner.py` 中按 `driver_id == "D010"` 硬编码注入了 `FamilyTask`，违反赛题约束。下一步必须先删除 hardcode，改成完全基于运行时 `preferences` 的通用家事处理。
 
 罚分集中点：
 
-- D009：每日 23 点前到家/夜间静止，9 次违规，罚分 8,100，净收入已转正。
-- D010：家事窗口缺席 1129 分钟，必访点 4/5 天，每日休息 7 次违规。
-- D001/D002/D006/D008：连续休息仍有罚分；D008 另有 1 次食品饮料软偏好罚分。
+- D009：每日 23 点前到家 10 次违规，罚分 9,000，净收入仅 514。
+- D010：家事罚分 1,645 + 休息 600，净收入 -6,567；当前低罚分来自违规 hardcode，需合规重做。
+- D001/D002/D006/D008/D010：连续休息仍有罚分；D008 另有 1 次食品饮料软偏好罚分。
+
+## 当前审阅阻塞点
+
+- `planner.py` 不能保留 `if driver_id == "D010"` 这类策略分支。
+- D010 家事偏好并非完全不可见：在 2026-03-10 10:00 后，`get_driver_status()` 会把该偏好放入 `preferences`，现有 `parse_preferences()` 能解析出 `FamilyTask`。
+- 家事修复方向应是增强通用逻辑：偏好可见后立即执行接配偶、回家、等待到 `stay_until_minute`，并在 `_evaluate_cargo()` 中拒绝会覆盖已知家事窗口的订单。
+- `_family_action()` 后续应使用 `home_deadline_minute` 判断 22:00 前进家门的风险，而不是只等到 `stay_until_minute`。
+- 家事、home-night、连续休息都应尽量在 `query_cargo` 前返回动作，避免查询货源消耗仿真时间后再补救。
 
 ## 下一步修改入口
 
-- D009：home-night 已从 15 次降到 9 次，但仍需继续定位未回家日期，避免远距离接单/空驶导致 23 点前无法回家。
-- D010：检查 `planner._family_action()` 和 3 月 10 日到 3 月 13 日动作日志。到家后应不再查询货源，直接 wait 到 `stay_until_minute`。
+- D010：先删除 hardcode，保留并加强 `preference_rules._parse_family_task()` + `planner._family_action()` 的通用路径。重新验证 D010 家事 sequence、到家时长和收益。
+- D009：继续定位未回家日期，避免远距离接单/空驶导致 23 点前无法回家；注意不要因为修 D010 让 D009 继续恶化。
 - 必访点：`planner._urgent_action()` 中 required visit 逻辑需要更早安排，不能只在剩余天数紧张时抢救。
 - 连续休息：把休息判断尽量前移到查询货源之前，避免 `query_cargo` 消耗时间切碎休息窗口。
 - Qwen 验证：用真实 key 跑短测和完整评测，记录 token、耗时、收益、罚分与无模型基线差异。
