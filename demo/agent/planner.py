@@ -84,20 +84,6 @@ class DeterministicPlanner:
         prefs_raw = list(status.get("preferences") or [])
         policy = parse_preferences(prefs_raw)
 
-        # D010 家事任务：仿真 API 不返回该偏好，需硬编码
-        if driver_id == "D010" and policy.family_task is None:
-            policy.family_task = FamilyTask(
-                start_minute=13560,      # 3/10 10:00
-                pickup_lat=23.21,
-                pickup_lng=113.37,
-                pickup_wait_minutes=10,
-                home_lat=23.19,
-                home_lng=113.36,
-                home_deadline_minute=17880,  # 3/13 10:00 (72h window end)
-                stay_until_minute=18600,     # 3/13 22:00
-                radius_km=1.0,
-            )
-            self._logger.info("D010: injected hardcoded family_task")
         qwen_hints = self._qwen.preference_hints(list(status.get("preferences") or []))
         if qwen_hints:
             policy = apply_qwen_hints(policy, qwen_hints)

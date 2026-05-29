@@ -104,7 +104,7 @@ D:\竞赛\demo\results\
 - `total_net_income_all_drivers = 115570.25`
 - `total_preference_penalty = 16945`
 
-注意：这个结果不能直接作为可合并成绩，因为当前分支为了修 D010 在 `planner.py` 中按 `driver_id == "D010"` 硬编码注入了 `FamilyTask`，违反赛题约束。下一步必须先删除 hardcode，改成完全基于运行时 `preferences` 的通用家事处理。
+注意：此前该分支因 `planner.py` 中按 `driver_id == "D010"` 硬编码注入 `FamilyTask` 而不能合并。**2026-05-29 已删除该 hardcode**，家事逻辑现完全基于运行时 `preferences` 解析。需重跑 31 天确认无回归后可合并。
 
 罚分集中点：
 
@@ -114,7 +114,7 @@ D:\竞赛\demo\results\
 
 ## 当前审阅阻塞点
 
-- `planner.py` 不能保留 `if driver_id == "D010"` 这类策略分支。
+- ~~`planner.py` 不能保留 `if driver_id == "D010"` 这类策略分支~~ **2026-05-29 已解决**，hardcode 已删除。
 - D010 家事偏好并非完全不可见：在 2026-03-10 10:00 后，`get_driver_status()` 会把该偏好放入 `preferences`，现有 `parse_preferences()` 能解析出 `FamilyTask`。
 - 家事修复方向应是增强通用逻辑：偏好可见后立即执行接配偶、回家、等待到 `stay_until_minute`，并在 `_evaluate_cargo()` 中拒绝会覆盖已知家事窗口的订单。
 - `_family_action()` 后续应使用 `home_deadline_minute` 判断 22:00 前进家门的风险，而不是只等到 `stay_until_minute`。
@@ -122,7 +122,7 @@ D:\竞赛\demo\results\
 
 ## 下一步修改入口
 
-- D010：先删除 hardcode，保留并加强 `preference_rules._parse_family_task()` + `planner._family_action()` 的通用路径。重新验证 D010 家事 sequence、到家时长和收益。
+- D010：~~先删除 hardcode~~ 已完成。下一步加强 `_family_action()` 使用 `home_deadline_minute` 做紧迫性判断，重新验证 D010 家事 sequence、到家时长和收益。
 - D009：继续定位未回家日期，避免远距离接单/空驶导致 23 点前无法回家；注意不要因为修 D010 让 D009 继续恶化。
 - 必访点：`planner._urgent_action()` 中 required visit 逻辑需要更早安排，不能只在剩余天数紧张时抢救。
 - 连续休息：把休息判断尽量前移到查询货源之前，避免 `query_cargo` 消耗时间切碎休息窗口。

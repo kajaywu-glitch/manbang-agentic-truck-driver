@@ -12,7 +12,7 @@
 - 当前 Agent 已能完整跑 31 天本地仿真，最新已计算结果无崩溃、无 `validation_error`、10 名司机都有动作日志。
 - 当前策略仍不是最终版：`mimo/fix-d010-family-task` 的无模型结果总净收入 `115,570.25`，总偏好罚分 `16,945`，但该结果来自含阻塞问题的分支，不能直接作为可合并成绩。
 - 当前主路径是确定性滚动规划；`qwen3.5-flash` 已集成到 `planner.py` 主决策流程（rank_cargos、suggest_decision、apply_qwen_hints），但默认不启用（需设置 `AGENT_ENABLE_QWEN35_FLASH=1`）。
-- Codex 审阅结论：`mimo/fix-d010-family-task` 不建议原样合并到 `main`。主要阻塞点是 `planner.py` 中按 `driver_id == "D010"` 硬编码家事规则，违反赛题约束；应改成完全基于运行时 `preferences` 的通用处理。
+- Codex 审阅结论：`mimo/fix-d010-family-task` 原先不建议合并，主要阻塞点是 `planner.py` 中按 `driver_id == "D010"` 硬编码家事规则。**2026-05-29 已删除该 hardcode**，家事逻辑现完全基于运行时 `preferences` 解析。
 
 ## Windows 环境
 
@@ -99,11 +99,11 @@ set AGENT_ENABLE_QWEN35_FLASH=1
 
 这些是 `mimo/fix-d010-family-task` 相对 `main` 的审阅结论，给下一位模型优先处理。
 
-### 阻塞问题
+### ~~阻塞问题~~（2026-05-29 已解决）
 
-1. `demo/agent/planner.py:87-100` 按 `driver_id == "D010"` 注入 `FamilyTask`，违反“禁止按 driver_id 写死策略”。该分支不能原样合并。
-2. 硬编码注释称“仿真 API 不返回该偏好”不准确。实测在 2026-03-10 10:00 以后，`get_driver_status("D010")` 会返回家事偏好，`parse_preferences()` 也能解析出 `FamilyTask(start_minute=13560, home_deadline_minute=14280, stay_until_minute=18600)`。
-3. 硬编码中的 `home_deadline_minute=17880` 与偏好文本“2026年3月10日22:00前进家门”不一致，正确值应为 `14280`。当前字段暂时未被 `_family_action()` 使用，但这是后续扩展时会埋雷的错误。
+1. ~~`demo/agent/planner.py:87-100` 按 `driver_id == “D010”` 注入 `FamilyTask`~~ — **已删除**。运行时 `preferences` 在 2026-03-10 10:00 后由 `get_driver_status()` 返回，`parse_preferences()` 能正确解析出 `FamilyTask(start_minute=13560, home_deadline_minute=14280, stay_until_minute=18600)`。
+2. ~~硬编码注释称”仿真 API 不返回该偏好”不准确~~ — 已验证：`driver_state_manager._preference_visible_at_wall_time()` 按 `start_time`/`end_time` 过滤，D010 家事偏好在 3/10 10:00 至 3/13 22:00 可见。
+3. ~~硬编码 `home_deadline_minute=17880` 错误~~ — 运行时解析正确值为 `14280`（3/10 22:00）。已通过删除 hardcode 自动修正。
 
 ### 需要优化的代码方向
 
@@ -165,7 +165,7 @@ set AGENT_ENABLE_QWEN35_FLASH=1
 - 休息/不接单/不出车前瞻：尽量避免把月度休息日拖到最后。
 - D003 月度空驶限额已经明显修好，最近完整结果中空驶 `99.93km`，罚分 0。
 - D009 指定熟货 `240646` 已能接到，熟货罚分 0。
-- D010 家事任务在当前审阅分支通过硬编码注入后 `sequence_ok=true`，但该做法违规，必须改成运行时偏好解析路径。
+- D010 家事任务已改为运行时偏好解析路径（2026-05-29 删除 hardcode），`parse_preferences()` 能在偏好可见后正确解析出 `FamilyTask`。
 - Qwen3.5-Flash 已接入主流程，但当前最新结果仍是未启用模型跑出的，token 用量 0。
 
 ## Qwen3.5-Flash 集成状态
@@ -188,7 +188,7 @@ set AGENT_ENABLE_QWEN35_FLASH=1
 
 真实 key 验证计划：
 
-1. **先修合规阻塞**：删除 `planner.py` 中 D010 `driver_id` hardcode，保留通用 `preferences` 解析路径。Qwen 验证不能在违规策略上作为可合并依据。
+1. ~~**先修合规阻塞**~~ **已完成**：`planner.py` 中 D010 `driver_id` hardcode 已删除，保留通用 `preferences` 解析路径。
 2. **环境检查并限制模型调用**：
 
 ```powershell
@@ -271,11 +271,33 @@ C:\Users\20689\miniconda3\Scripts\conda.exe run -n mus-tread python -m compileal
 
 结果：通过。
 
+## 本轮改动（2026-05-29）
+
+**分支**：`mimo/fix-d010-family-task`
+
+**已修改文件**：`demo/agent/planner.py`（删除 14 行 D010 hardcode）
+
+**改动内容**：
+- 删除 `planner.py` 中 `if driver_id == "D010"` 硬编码注入 `FamilyTask` 的代码块（原第 87-100 行）。
+- 家事逻辑现完全依赖运行时 `preferences` → `parse_preferences()` → `family_task`。
+
+**验证**：
+- `compileall` 通过。
+- 调试脚本确认：D010 的 `preferences` 在仿真 API 中按 `start_time`/`end_time` 时间窗过滤返回；`_parse_family_task()` 能正确解析出 `FamilyTask(start_minute=13560, home_deadline_minute=14280, stay_until_minute=18600)`。
+- 修正了原 hardcode 中 `home_deadline_minute=17880` 的错误，运行时正确值为 `14280`。
+
+**31 天仿真**：已启动但用户要求暂停，待 Codex 审阅后再跑。
+
+**Codex 审阅重点**：
+1. 确认 `planner.py` 中不再有任何 `driver_id` 判断逻辑。
+2. 确认 `_family_action()` + `_evaluate_cargo()` 的家事保护在偏好可见后生效。
+3. 评估是否需要进一步使用 `home_deadline_minute` 做紧迫性判断。
+
 ## 下一步优先级
 
 ### 高优先级
 
-1. **移除 D010 hardcode**：这是当前分支合并前的阻塞项。删除 `driver_id == "D010"` 注入，证明运行时 `preferences` 可解析，并重新跑完整 31 天。
+1. ~~**移除 D010 hardcode**~~ **已完成**：`driver_id == "D010"` 注入已删除，运行时 `preferences` 解析验证通过。下一步需跑完整 31 天确认无回归。
 2. **通用家事执行器**：优化 `_family_action()` 与 `_evaluate_cargo()`，用 `home_deadline_minute`、pickup wait、stay window 做通用约束；确保偏好可见后不再查询货源、不再接会覆盖家事窗口的订单。
 3. **D009 home_night**（罚分 9,000）：10 次 23:00 前未到家。核心问题是白天接远单后赶不回家。当前 home_night 约束效果有限，需要更强的白天定位策略（如下午主动 reposition 回家方向）。
 4. **每日连续休息**：D001(1,200)、D002(1,600)、D006(1,200)、D008(2,400)、D010(600) 仍有罚分。检查休息是否被查询耗时切碎。
