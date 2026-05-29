@@ -130,6 +130,19 @@ set AGENT_ENABLE_QWEN35_FLASH=1
 
 预期收益：先压低 D009/D010/连续休息这类高罚分，再让 Qwen 处理少数冲突决策；同时显著减少模型调用、超时和 token。
 
+### 下一轮进度显示任务
+
+当前已有旁路观察脚本 `scripts/watch_progress.ps1`，但下一轮还要把“启动 Agent/仿真时实时打印进度”做成内置能力。
+
+实现要求：
+
+1. 增加环境开关，例如 `AGENT_PROGRESS_STDERR=1` 和 `AGENT_PROGRESS_EVERY_STEPS=1`。
+2. 在本地运行时向 `stderr` 或 logging 输出 heartbeat，不修改动作 JSON，不影响官方接口返回。
+3. heartbeat 至少包含：`driver_id`、step 或历史动作数、`simulation_wall_time`、动作类型、决策原因、Qwen 是否调用、token、本轮耗时。
+4. 默认不得打印 API key、完整 prompt、完整货源列表、`.env.local` 内容。
+5. 完整仿真和 Qwen 短测启动命令应能实时看到进度，不要再只依赖 `tail -50` 最后才吐输出。
+6. 如需改 `demo/server/bench` 做本地 runner 进度，也必须保持评测逻辑不变；优先用 logging/heartbeat，不改评分和动作执行。
+
 ## 关键文件
 
 - `demo/agent/model_decision_service.py`：官方入口，调用 Planner，并在异常时返回合法 `wait`。
@@ -266,7 +279,8 @@ C:\Users\20689\miniconda3\Scripts\conda.exe run -n mus-tread python -m compileal
 2. **通用家事执行器**：优化 `_family_action()` 与 `_evaluate_cargo()`，用 `home_deadline_minute`、pickup wait、stay window 做通用约束；确保偏好可见后不再查询货源、不再接会覆盖家事窗口的订单。
 3. **D009 home_night**（罚分 9,000）：10 次 23:00 前未到家。核心问题是白天接远单后赶不回家。当前 home_night 约束效果有限，需要更强的白天定位策略（如下午主动 reposition 回家方向）。
 4. **每日连续休息**：D001(1,200)、D002(1,600)、D006(1,200)、D008(2,400)、D010(600) 仍有罚分。检查休息是否被查询耗时切碎。
-5. **用真实 API key 验证 Qwen3.5-Flash**。`.env.local` 格式已检查通过；合规修复后按上面的真实 key 验证计划先跑 `--max-steps 200`，确认日志中有模型调用和 token > 0，再跑 31 天完整评测。
+5. **内置实时进度显示**：实现 `AGENT_PROGRESS_STDERR=1` heartbeat，启动仿真时实时看到 driver/step/仿真时间/action/token，避免长时间黑箱等待。
+6. **用真实 API key 验证 Qwen3.5-Flash**。`.env.local` 格式已检查通过；合规修复后按上面的真实 key 验证计划先跑 `--max-steps 200`，确认日志中有模型调用和 token > 0，再跑 31 天完整评测。
 
 ### 已知问题
 

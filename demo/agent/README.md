@@ -141,6 +141,25 @@ D:\竞赛\demo\results\
 
 这比“每一步让 Qwen 给货源打分”更可能提高最终成绩，因为主要收益来自降低高罚分和避免模型超时。
 
+## 内置进度显示计划
+
+旁路脚本 `scripts/watch_progress.ps1` 已能看日志，但下一轮需要在 Agent/本地仿真启动时内置实时进度输出。
+
+建议接口：
+
+```powershell
+$env:AGENT_PROGRESS_STDERR = "1"
+$env:AGENT_PROGRESS_EVERY_STEPS = "1"
+```
+
+实现约束：
+
+- 只输出到 `stderr` 或 logging，不改变 action JSON。
+- 每次 `decide()` 后输出一行：driver、历史 step、仿真时间、action、reason、Qwen 调用类型、token、本轮耗时。
+- 默认不输出密钥、prompt、完整货源列表。
+- 适合放在 `model_decision_service.py` 外层或新增 `progress.py`，避免污染核心规划逻辑。
+- 如果选择改 `demo/server/bench`，只能增加本地 runner heartbeat，不能改评分逻辑。
+
 ## 真实 Key 验证流程
 
 必须先确保没有 `driver_id` hardcode，再验证 Qwen：

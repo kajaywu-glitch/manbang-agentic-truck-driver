@@ -371,6 +371,27 @@ cd D:\竞赛
 
 可选增强：如果后续需要改服务端日志，优先加非侵入式 heartbeat，而不是改评测逻辑。heartbeat 至少包含：driver、step、sim_clock、elapsed_seconds、tokens_total、qwen_call_count、last_action。
 
+下一轮必须实现的内置进度能力：
+
+- 增加启动时可开启的实时输出，例如：
+
+```powershell
+$env:AGENT_PROGRESS_STDERR = "1"
+$env:AGENT_PROGRESS_EVERY_STEPS = "1"
+```
+
+- 输出位置用 `stderr` 或 logging，不能改变 `ModelDecisionService.decide(driver_id)` 的 action JSON。
+- 每条 heartbeat 建议格式：
+
+```text
+[AGENT_PROGRESS] driver=D001 step=12 sim=2026-03-04 14:18 action=take_order reason=best_cargo qwen=rank_cargos tokens=5745 elapsed_ms=48720
+```
+
+- 不得输出 API key、完整 prompt、完整货源列表或 `.env.local`。
+- 若在 `demo/agent/` 内实现，建议放在 `model_decision_service.py` 或独立 `progress.py`，只包裹决策输入/输出和耗时统计。
+- 若在 `demo/server/bench/` 本地 runner 实现，必须保持评分与动作执行逻辑不变，只增加可选日志。
+- 完整评测时，Mimo 交接说明必须写明进度输出是否可用、如何开启、最后跑到哪个 driver/step。
+
 ## Hybrid Agent 约束
 
 - Qwen3.5-Flash 是基座模型，但不是无约束动作生成器。
