@@ -60,6 +60,22 @@ $env:TIANCHI_MODEL_API_KEY = $env:DASHSCOPE_API_KEY
 $env:AGENT_ENABLE_QWEN35_FLASH = "1"
 ```
 
+推荐本地做法：把真实 key 填到仓库根目录的 `D:\竞赛\.env.local`，该文件已被 `.gitignore` 忽略，不要提交。Mimo/CC 在运行仿真前，在同一个 PowerShell 终端执行：
+
+```powershell
+cd D:\竞赛
+.\scripts\load_local_env.ps1
+```
+
+如果 PowerShell 拦截脚本执行，先在当前终端放开本进程策略：
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\scripts\load_local_env.ps1
+```
+
+加载脚本只打印 `key_present=True/False`，不会打印真实 key。之后再运行 `demo/server/main.py`，子进程才能读到 `DASHSCOPE_API_KEY`、`TIANCHI_MODEL_API_KEY` 和 `AGENT_ENABLE_QWEN35_FLASH`。
+
 CMD 写法不同：
 
 ```cmd

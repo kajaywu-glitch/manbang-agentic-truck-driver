@@ -24,10 +24,11 @@ SimulationApiPort.model_chat_completion(payload)
 启用方式：
 
 ```powershell
-$env:DASHSCOPE_API_KEY = "你的新APIKey"
-$env:TIANCHI_MODEL_API_KEY = $env:DASHSCOPE_API_KEY
-$env:AGENT_ENABLE_QWEN35_FLASH = "1"
+cd D:\竞赛
+.\scripts\load_local_env.ps1
 ```
+
+真实 key 填在 `D:\竞赛\.env.local`。该文件已被 `.gitignore` 忽略，不能提交；加载脚本不会打印 key，只会提示 `key_present=True/False`。必须在同一个 PowerShell 终端里加载后再运行仿真。
 
 模型只允许做偏好结构化、货源评分或少量候选裁决提示，最终动作仍必须由本地代码校验。
 

@@ -203,9 +203,17 @@ git switch -c codex/fix-任务名
 启用环境变量：
 
 ```powershell
-$env:DASHSCOPE_API_KEY = "你的新APIKey"
-$env:TIANCHI_MODEL_API_KEY = $env:DASHSCOPE_API_KEY
-$env:AGENT_ENABLE_QWEN35_FLASH = "1"
+cd D:\竞赛
+.\scripts\load_local_env.ps1
+```
+
+真实 key 放在 `D:\竞赛\.env.local`。该文件已被 Git 忽略，只能留在用户本机；Mimo 不得把 `.env.local`、真实 key、截图或控制台明文 key 提交到仓库或贴进交接文档。脚本只把 key 注入当前 PowerShell 进程，随后在同一终端运行仿真即可。
+
+如果脚本被执行策略拦截：
+
+```powershell
+Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
+.\scripts\load_local_env.ps1
 ```
 
 建议增加或使用调用上限：
