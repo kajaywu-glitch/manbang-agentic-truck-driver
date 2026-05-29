@@ -1,8 +1,13 @@
-"""Deterministic rolling planner for the truck-driver cargo simulation."""
+"""Rolling planner for the truck-driver cargo simulation.
+
+Supports optional Qwen3.5-Flash model review for cargo ranking and
+candidate selection. Falls back to deterministic logic on any failure.
+"""
 
 from __future__ import annotations
 
 import logging
+import os
 from dataclasses import dataclass
 from typing import Any
 
@@ -22,6 +27,7 @@ from agent.preference_rules import (
     HomeNightRule,
     PreferencePolicy,
     RequiredCargo,
+    apply_qwen_hints,
     needs_rest_today,
     must_rest_today_proactive,
     parse_preferences,
@@ -62,12 +68,14 @@ class CargoPlan:
 
 
 class DeterministicPlanner:
-    """A model-free planner that only uses the official SimulationApiPort."""
+    """Rolling planner with optional Qwen3.5-Flash model review."""
 
     def __init__(self, api: SimulationApiPort) -> None:
         self._api = api
         self._logger = logging.getLogger("agent.planner")
         self._qwen = QwenFlashHelper(api)
+        self._qwen_review_count = 0
+        self._qwen_max_reviews = int(os.environ.get("AGENT_QWEN_MAX_REVIEWS", "500"))
 
     def decide(self, driver_id: str) -> dict[str, Any]:
         status = self._api.get_driver_status(driver_id)
@@ -76,7 +84,8 @@ class DeterministicPlanner:
         policy = parse_preferences(list(status.get("preferences") or []))
         qwen_hints = self._qwen.preference_hints(list(status.get("preferences") or []))
         if qwen_hints:
-            self._logger.info("loaded %s preference hints driver=%s keys=%s", QWEN_FLASH_MODEL, driver_id, sorted(qwen_hints.keys()))
+            policy = apply_qwen_hints(policy, qwen_hints)
+            self._logger.info("applied %s preference hints driver=%s keys=%s", QWEN_FLASH_MODEL, driver_id, sorted(qwen_hints.keys()))
 
         urgent = self._urgent_action(status, memory, policy)
         if urgent is not None:
@@ -124,14 +133,59 @@ class DeterministicPlanner:
             self._logger.info("post-query urgent decision driver=%s action=%s", driver_id, urgent_after_query)
             return urgent_after_query
 
-        best_cargo = self._best_cargo_plan(status, memory, policy, items)
+        best_cargo = self._best_cargo_plan(driver_id, status, memory, policy, items)
         wait_candidate = self._wait_candidate(status, memory, policy, items, best_cargo)
         reposition_candidate = self._reposition_candidate(status, memory, policy, best_cargo)
 
         candidates = [c for c in (best_cargo, wait_candidate, reposition_candidate) if c is not None]
         if not candidates:
             return self._wait(60)
+
+        # 确定性选择
         chosen = max(candidates, key=lambda c: c.score)
+
+        # Qwen3.5-Flash 候选复审：当模型可用、还有复审额度、且候选分数接近时
+        if self._qwen.enabled and self._qwen_review_count < self._qwen_max_reviews and len(candidates) > 1:
+            scores = sorted([c.score for c in candidates], reverse=True)
+            score_gap = scores[0] - scores[1] if len(scores) > 1 else 999
+            has_high_risk = any(
+                kw in (chosen.reason or "")
+                for kw in ("required_cargo", "home_night", "family", "rest", "required_visit")
+            )
+            # 候选分数接近（<30%差距）或存在高风险偏好时，请求模型复审
+            if score_gap < max(30, abs(scores[0]) * 0.3) or has_high_risk:
+                context = {
+                    "now_minute": now_minute,
+                    "day": now_minute // DAY_MINUTES,
+                    "rest_needed": needs_rest_today(policy, memory, now_minute),
+                    "deadhead_km": memory.deadhead_km,
+                    "high_risk": has_high_risk,
+                }
+                cand_dicts = [
+                    {"action": c.action.get("action", ""), "params": c.action.get("params", {}),
+                     "reason": c.reason, "score": c.score}
+                    for c in candidates
+                ]
+                model_idx = self._qwen.suggest_decision(driver_id, status, cand_dicts, context)
+                self._qwen_review_count += 1
+                if model_idx is not None and 0 <= model_idx < len(candidates):
+                    model_choice = candidates[model_idx]
+                    # 安全检查：模型选择的候选分数不能太低（低于确定性选择的50%）
+                    if model_choice.score >= chosen.score * 0.5:
+                        self._logger.info(
+                            "Qwen review: model chose %s (score=%.1f) over %s (score=%.1f) for driver=%s",
+                            model_choice.reason, model_choice.score,
+                            chosen.reason, chosen.score, driver_id,
+                        )
+                        chosen = model_choice
+                    else:
+                        self._logger.info(
+                            "Qwen review: model choice rejected (score too low %.1f vs %.1f) for driver=%s",
+                            model_choice.score, chosen.score, driver_id,
+                        )
+                else:
+                    self._logger.debug("Qwen review: no valid choice for driver=%s, using deterministic", driver_id)
+
         self._logger.info(
             "decision driver=%s now=%s loc=(%.5f,%.5f) action=%s reason=%s score=%.2f items=%s",
             driver_id,
@@ -226,8 +280,9 @@ class DeterministicPlanner:
             family.start_minute,
             family.pickup_wait_minutes,
         )
-        at_pickup = haversine_km(lat, lng, family.pickup_lat, family.pickup_lng) <= family.radius_km
-        at_home = haversine_km(lat, lng, family.home_lat, family.home_lng) <= family.radius_km
+        # 使用更大的半径检查（5km），避免因 1km 误判导致跳出家事流程
+        at_pickup = haversine_km(lat, lng, family.pickup_lat, family.pickup_lng) <= 5.0
+        at_home = haversine_km(lat, lng, family.home_lat, family.home_lng) <= 5.0
 
         # 如果已到家且在 stay_until 之前，等待
         if at_home and now_minute < family.stay_until_minute:
@@ -237,17 +292,13 @@ class DeterministicPlanner:
         if now_minute >= family.stay_until_minute:
             return None
 
-        # 计算回家所需时间
-        dist_to_home = haversine_km(lat, lng, family.home_lat, family.home_lng)
-        travel_to_home = distance_to_minutes(dist_to_home)
-
         # 永远先接配偶（跳过会导致 9000 固定罚分，远比迟到罚分严重）
         if not pickup_done:
             if not at_pickup:
                 return {"action": "reposition", "params": {"latitude": family.pickup_lat, "longitude": family.pickup_lng}}
             return self._wait(family.pickup_wait_minutes)
 
-        # pickup 完成或 deadline 紧迫 → 回家
+        # pickup 完成 → 回家
         if not at_home:
             return {"action": "reposition", "params": {"latitude": family.home_lat, "longitude": family.home_lng}}
 
@@ -308,8 +359,8 @@ class DeterministicPlanner:
         dist = haversine_km(lat, lng, home.lat, home.lng)
         travel = distance_to_minutes(dist)
         deadline = (now_minute - mod) + home.deadline_minute_of_day
-        # 动态计算最晚出发时间：deadline - travel - 30分钟缓冲
-        latest_depart = deadline - travel - 30
+        # 动态计算最晚出发时间：deadline - travel - 90分钟缓冲（确保在23:00前到家）
+        latest_depart = deadline - travel - 90
         if latest_depart < now_minute:
             latest_depart = now_minute  # 已经晚了，立即出发
         if not at_home and now_minute >= latest_depart:
@@ -320,6 +371,7 @@ class DeterministicPlanner:
 
     def _best_cargo_plan(
         self,
+        driver_id: str,
         status: dict[str, Any],
         memory: DriverMemory,
         policy: PreferencePolicy,
@@ -346,12 +398,61 @@ class DeterministicPlanner:
                         return Candidate({"action": "take_order", "params": {"cargo_id": rc.cargo_id}}, 99999.0, "required_cargo_forced")
 
         best: CargoPlan | None = None
+        evaluated_plans: list[tuple[Any, CargoPlan]] = []
         for item in items:
             plan = self._evaluate_cargo(item, now_minute, current_lat, current_lng, truck_length, memory, policy)
             if plan is None:
                 continue
+            evaluated_plans.append((item, plan))
             if best is None or plan.score > best.score:
                 best = plan
+
+        # Qwen3.5-Flash 货源评分融合
+        if self._qwen.enabled and evaluated_plans and self._qwen_review_count < self._qwen_max_reviews:
+            constraints = {
+                "forbidden_cargo": list(policy.forbidden_cargo_names),
+                "soft_avoid_cargo": list(policy.soft_avoid_cargo_names),
+                "max_haul_km": policy.max_haul_km,
+                "max_pickup_km": policy.max_pickup_km,
+                "daily_rest_minutes": policy.daily_rest_minutes,
+                "deadhead_budget_remaining": (
+                    max(0, policy.max_month_deadhead_km - memory.deadhead_km)
+                    if policy.max_month_deadhead_km is not None else None
+                ),
+            }
+            cargo_items = [item for item, _ in evaluated_plans]
+            model_scores = self._qwen.rank_cargos(driver_id, status, cargo_items, constraints)
+            self._qwen_review_count += 1  # 无论成功失败都计数，避免无限重试
+            if model_scores:
+                # 融合：alpha * model_score + (1-alpha) * det_score
+                alpha = 0.35
+                best_after_blend = None
+                for item, plan in evaluated_plans:
+                    model_s = model_scores.get(plan.cargo_id)
+                    if model_s is not None:
+                        # model_s 是 0-100，det_score 通常是 -500 到 500+
+                        # 将 model_s 映射到 det_score 的量级
+                        blended = alpha * (model_s * 5.0) + (1 - alpha) * plan.score
+                        if best_after_blend is None or blended > best_after_blend[1]:
+                            best_after_blend = (plan, blended)
+                if best_after_blend is not None and best_after_blend[0].cargo_id != best.cargo_id:
+                    self._logger.info(
+                        "Qwen rank: model reranked cargo %s (%.0f) over %s (%.0f) for driver=%s",
+                        best_after_blend[0].cargo_id, best_after_blend[1],
+                        best.cargo_id, best.score, driver_id,
+                    )
+                    best = best_after_blend[0]
+                    # 更新 score 为融合后的值
+                    best = CargoPlan(
+                        cargo_id=best.cargo_id, cargo_name=best.cargo_name,
+                        price=best.price, pickup_km=best.pickup_km, haul_km=best.haul_km,
+                        pickup_minutes=best.pickup_minutes, wait_minutes=best.wait_minutes,
+                        duration_minutes=best.duration_minutes, finish_minutes=best.finish_minutes,
+                        start_lat=best.start_lat, start_lng=best.start_lng,
+                        end_lat=best.end_lat, end_lng=best.end_lng,
+                        score=best_after_blend[1],
+                    )
+
         if best is None:
             return None
         if best.score < 15.0:
@@ -434,8 +535,8 @@ class DeterministicPlanner:
             # 如果已过23:00，不接新单
             if now_minute >= today_deadline:
                 return None
-            # 送货完成时间不能超过今天23:00
-            if finish > today_deadline:
+            # 送货完成时间不能超过今天23:00前90分钟（确保有足够时间回家）
+            if finish > today_deadline - 90:
                 return None
             # 从卸货点回家的时间
             dist_end_to_home = haversine_km(end_lat, end_lng, home.lat, home.lng)
@@ -443,14 +544,18 @@ class DeterministicPlanner:
             arrive_home = finish + travel_end_to_home
             if arrive_home > today_deadline:
                 return None
-            # 时间紧张度检查
+            # 时间紧张度检查：需要90分钟缓冲（而非30分钟）
             time_to_deadline = today_deadline - now_minute
             dist_to_home_now = haversine_km(current_lat, current_lng, home.lat, home.lng)
             travel_home_now = distance_to_minutes(dist_to_home_now)
-            if time_to_deadline < travel_home_now + 30:
+            if time_to_deadline < travel_home_now + 90:
                 return None
+            # 如果已经过了20:00，只允许极短单（1小时内完成+回家）
+            if minute_of_day(now_minute) >= 20 * 60:
+                if finish + travel_end_to_home > today_deadline - 30:
+                    return None
 
-        # 休息保障：如果司机今天还需要连续休息，且接单后剩余时间不够，降权
+        # 休息保障：如果司机今天还需要连续休息，且接单会打断休息，拒绝
         if policy.daily_rest_minutes > 0:
             rest_remaining = needs_rest_today(policy, memory, now_minute)
             if rest_remaining > 0:
@@ -458,6 +563,16 @@ class DeterministicPlanner:
                 if remaining_today < rest_remaining:
                     # 接单会侵占休息时间，严重降权
                     return None
+                # 如果司机当前正在休息（最近一个动作是 wait 且已持续 >= 60 分钟），不打断
+                if memory.records:
+                    last = memory.records[-1]
+                    if last.action_name == "wait" and last.action_exec_cost >= 60:
+                        return None
+
+        # 家事窗口保障：在家事窗口内不接单（避免延误回家）
+        family = policy.family_task
+        if family is not None and family.start_minute <= now_minute < family.stay_until_minute:
+            return None
 
         travel_cost = (pickup_km + haul_km) * DEFAULT_COST_PER_KM
         base_net = price - travel_cost

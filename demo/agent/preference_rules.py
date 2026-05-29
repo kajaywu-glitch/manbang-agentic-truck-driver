@@ -127,6 +127,53 @@ def parse_preferences(preferences: list[Any]) -> PreferencePolicy:
     return policy
 
 
+def apply_qwen_hints(policy: PreferencePolicy, hints: dict[str, Any]) -> PreferencePolicy:
+    """Apply model-generated preference hints. Only tightens constraints, never relaxes.
+
+    Args:
+        policy: Existing parsed policy.
+        hints: Dict from QwenFlashHelper.preference_hints().
+
+    Returns:
+        Updated policy (modified in-place and returned).
+    """
+    if not hints:
+        return policy
+
+    # 禁运品类：只能新增，不能移除
+    extra_forbidden = hints.get("forbidden_cargo_names")
+    if isinstance(extra_forbidden, list):
+        for name in extra_forbidden:
+            if isinstance(name, str) and name:
+                policy.forbidden_cargo_names.add(name)
+
+    extra_soft = hints.get("soft_avoid_cargo_names")
+    if isinstance(extra_soft, list):
+        for name in extra_soft:
+            if isinstance(name, str) and name:
+                policy.soft_avoid_cargo_names.add(name)
+
+    # 距离限制：只能收紧
+    hint_haul = hints.get("max_haul_km")
+    if isinstance(hint_haul, (int, float)) and hint_haul > 0:
+        if policy.max_haul_km is None or hint_haul < policy.max_haul_km:
+            policy.max_haul_km = float(hint_haul)
+
+    hint_pickup = hints.get("max_pickup_km")
+    if isinstance(hint_pickup, (int, float)) and hint_pickup > 0:
+        if policy.max_pickup_km is None or hint_pickup < policy.max_pickup_km:
+            policy.max_pickup_km = float(hint_pickup)
+
+    # 休息时间：只能增加
+    hint_rest = hints.get("daily_rest_hours")
+    if isinstance(hint_rest, (int, float)) and hint_rest > 0:
+        rest_min = int(hint_rest * 60)
+        if rest_min > policy.daily_rest_minutes:
+            policy.daily_rest_minutes = rest_min
+
+    return policy
+
+
 def quiet_overlap(windows: list[QuietWindow], start_minute: int, end_minute: int) -> bool:
     if end_minute <= start_minute:
         return False
