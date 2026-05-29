@@ -58,6 +58,13 @@ cd demo
 python calc_monthly_income.py
 ```
 
+Windows/PowerShell 下如遇到中文输出编码报错，可先设置：
+
+```powershell
+$env:PYTHONIOENCODING = "utf-8"
+python calc_monthly_income.py
+```
+
 输出文件：`demo/results/monthly_income_202603.json`。
 
 ## 结果文件说明
