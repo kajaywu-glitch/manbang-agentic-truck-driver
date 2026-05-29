@@ -1,8 +1,8 @@
 # Agent 实现说明
 
-最后更新：2026-05-29 16:43 +08:00
+最后更新：2026-05-29 19:20 +08:00
 
-本次更新：同步 `main@ec2f92c` 状态，说明 D010 hardcode 已删除并合并，旧 31 天结果仅作历史对比，下一步先重跑合并后基线再做 Risk-Gated MPC 和 Qwen 受控验证。
+本次更新：记录 `mimo/risk-gated-mpc` 分支实现 Risk-Gated MPC、内置进度显示、Qwen 触发收紧和高罚分约束优化。短测因 Qwen 调用耗时过长超时，需 Codex 审阅后继续迭代。
 
 本目录是当前比赛项目的主要修改面。官方入口仍是 `ModelDecisionService.decide(driver_id)`，外部评测进程会注入 `SimulationApiPort`。
 

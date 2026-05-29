@@ -75,7 +75,7 @@ class DeterministicPlanner:
         self._logger = logging.getLogger("agent.planner")
         self._qwen = QwenFlashHelper(api)
         self._qwen_review_count = 0
-        self._qwen_max_reviews = int(os.environ.get("AGENT_QWEN_MAX_REVIEWS", "500"))
+        self._qwen_max_reviews = int(os.environ.get("AGENT_QWEN_MAX_REVIEWS", "100"))
 
     def decide(self, driver_id: str) -> dict[str, Any]:
         status = self._api.get_driver_status(driver_id)
@@ -154,8 +154,8 @@ class DeterministicPlanner:
                 kw in (chosen.reason or "")
                 for kw in ("required_cargo", "home_night", "family", "rest", "required_visit")
             )
-            # 候选分数接近（<30%差距）或存在高风险偏好时，请求模型复审
-            if score_gap < max(30, abs(scores[0]) * 0.3) or has_high_risk:
+            # 候选分数接近（<20%差距）且存在高风险偏好时，请求模型复审
+            if score_gap < max(20, abs(scores[0]) * 0.2) and has_high_risk:
                 context = {
                     "now_minute": now_minute,
                     "day": now_minute // DAY_MINUTES,
@@ -260,11 +260,20 @@ class DeterministicPlanner:
                 if dist > visit.radius_km and dist <= 120 and self._active_allowed(policy, now_minute, now_minute + distance_to_minutes(dist)):
                     return {"action": "reposition", "params": {"latitude": visit.lat, "longitude": visit.lng}}
 
+        # 连续休息前移：提前 3 小时检查，避免 query_cargo 切碎休息窗口
         rest_remaining = needs_rest_today(policy, memory, now_minute)
         if rest_remaining > 0:
             latest_start = DAY_MINUTES - policy.daily_rest_minutes
-            if minute_of_day(now_minute) >= latest_start - 60:
-                return self._wait(max(30, min(rest_remaining, day_end(now_minute) - now_minute)))
+            mod = minute_of_day(now_minute)
+            # 提前 3 小时开始休息，或没有好订单时提前 2 小时
+            if mod >= latest_start - 180:
+                duration = max(30, min(rest_remaining, day_end(now_minute) - now_minute))
+                return self._wait(duration)
+            # 如果当前正在休息中（最近动作是 wait >= 60 分钟），不打断
+            if memory.records:
+                last = memory.records[-1]
+                if last.action_name == "wait" and last.action_exec_cost >= 60:
+                    return self._wait(max(30, min(rest_remaining, day_end(now_minute) - now_minute)))
         return None
 
     def _family_action(
@@ -292,6 +301,16 @@ class DeterministicPlanner:
         # 如果已过 stay_until，家事完成
         if now_minute >= family.stay_until_minute:
             return None
+
+        # home_deadline 紧迫性检查：如果距 deadline 不足，立即回家
+        if not at_home and family.home_deadline_minute > 0:
+            dist_home = haversine_km(lat, lng, family.home_lat, family.home_lng)
+            travel_home = distance_to_minutes(dist_home)
+            time_to_deadline = family.home_deadline_minute - now_minute
+            # 如果回家路上时间 + 30分钟缓冲 >= 距 deadline 时间，立即回家
+            if time_to_deadline <= travel_home + 30 and not pickup_done:
+                # 先去接人再回家已来不及，直接回家避免最大罚分
+                return {"action": "reposition", "params": {"latitude": family.home_lat, "longitude": family.home_lng}}
 
         # 永远先接配偶（跳过会导致 9000 固定罚分，远比迟到罚分严重）
         if not pickup_done:
@@ -360,12 +379,18 @@ class DeterministicPlanner:
         dist = haversine_km(lat, lng, home.lat, home.lng)
         travel = distance_to_minutes(dist)
         deadline = (now_minute - mod) + home.deadline_minute_of_day
-        # 动态计算最晚出发时间：deadline - travel - 90分钟缓冲（确保在23:00前到家）
-        latest_depart = deadline - travel - 90
+        time_to_deadline = deadline - now_minute
+        # 动态缓冲：距离越远、时间越紧，越早出发
+        buffer = max(60, travel // 3)
+        latest_depart = deadline - travel - buffer
         if latest_depart < now_minute:
             latest_depart = now_minute  # 已经晚了，立即出发
         if not at_home and now_minute >= latest_depart:
             # 需要回家了
+            if self._active_allowed(policy, now_minute, now_minute + travel):
+                return {"action": "reposition", "params": {"latitude": home.lat, "longitude": home.lng}}
+        # 18:00 后且不在家，主动回家（不等 latest_depart）
+        if not at_home and mod >= 18 * 60 and time_to_deadline < travel + 180:
             if self._active_allowed(policy, now_minute, now_minute + travel):
                 return {"action": "reposition", "params": {"latitude": home.lat, "longitude": home.lng}}
         return None
@@ -408,8 +433,26 @@ class DeterministicPlanner:
             if best is None or plan.score > best.score:
                 best = plan
 
-        # Qwen3.5-Flash 货源评分融合
+        # Qwen3.5-Flash 货源评分融合 — 只在高风险或候选不确定时触发
+        should_rank = False
         if self._qwen.enabled and evaluated_plans and self._qwen_review_count < self._qwen_max_reviews:
+            # 高风险场景：home-night、家事、休息、必访点、熟货
+            has_risk = (
+                policy.home_night is not None
+                or policy.family_task is not None
+                or policy.daily_rest_minutes > 0
+                or policy.required_visits
+                or policy.required_cargo is not None
+            )
+            # 候选不确定：前两名分数接近
+            if len(evaluated_plans) >= 2:
+                scores_sorted = sorted([p.score for _, p in evaluated_plans], reverse=True)
+                gap = scores_sorted[0] - scores_sorted[1]
+                uncertain = gap < max(30, abs(scores_sorted[0]) * 0.25)
+            else:
+                uncertain = False
+            should_rank = has_risk and uncertain
+        if should_rank:
             constraints = {
                 "forbidden_cargo": list(policy.forbidden_cargo_names),
                 "soft_avoid_cargo": list(policy.soft_avoid_cargo_names),
@@ -586,6 +629,14 @@ class DeterministicPlanner:
         net_per_hour = base_net / (total_minutes / 60.0)
         score = base_net + 0.25 * net_per_hour - pickup_km * 0.35 - wait_minutes * 0.08
 
+        # Risk-Gated MPC: penalty_risk 估算 — 接单后是否还能满足硬约束
+        penalty_risk = self._estimate_penalty_risk(
+            finish, end_lat, end_lng, now_minute, policy, memory
+        )
+        if penalty_risk >= 500:
+            return None  # 高罚分风险直接拒绝
+        score -= penalty_risk
+
         # 目的地机会价值：根据 market_heat 给加分
         dest_bonus = 0.0
         best_areas = memory.best_market_areas(top_k=5)
@@ -625,6 +676,68 @@ class DeterministicPlanner:
             end_lng=end_lng,
             score=score,
         )
+
+    def _estimate_penalty_risk(
+        self,
+        finish_minute: int,
+        end_lat: float,
+        end_lng: float,
+        now_minute: int,
+        policy: PreferencePolicy,
+        memory: DriverMemory,
+    ) -> float:
+        """Risk-Gated MPC: 估算接单后的罚分风险。
+
+        检查接单完成后是否还能满足 home-night、家事、休息等硬约束。
+        返回估算的罚分风险值（>= 500 表示应直接拒绝）。
+        """
+        risk = 0.0
+
+        # 1. Home-night 风险：完单后能否在当天 23:00 前到家
+        home = policy.home_night
+        if home is not None:
+            today_base = now_minute - minute_of_day(now_minute)
+            today_deadline = today_base + home.deadline_minute_of_day
+            if finish_minute < today_deadline:
+                dist_end_to_home = haversine_km(end_lat, end_lng, home.lat, home.lng)
+                travel_end_to_home = distance_to_minutes(dist_end_to_home)
+                arrive_home = finish_minute + travel_end_to_home
+                if arrive_home > today_deadline:
+                    risk += 300  # 高风险：赶不回家
+                elif arrive_home > today_deadline - 60:
+                    risk += 150  # 中风险：非常紧张
+            # 如果完单跨天，检查明天是否能按时回家
+            elif finish_minute // DAY_MINUTES > now_minute // DAY_MINUTES:
+                risk += 50
+
+        # 2. 家事窗口风险：接单是否会侵占家事窗口
+        family = policy.family_task
+        if family is not None:
+            if finish_minute > family.start_minute - 30:
+                risk += 400  # 接单完成时间接近家事开始
+            if now_minute < family.start_minute and finish_minute > family.start_minute:
+                risk += 500  # 接单会跨越家事窗口开始
+
+        # 3. 休息风险：接单后今天是否还有足够连续休息时间
+        if policy.daily_rest_minutes > 0:
+            remaining_today = day_end(now_minute) - finish_minute
+            if remaining_today < policy.daily_rest_minutes:
+                risk += 200  # 休息时间不足
+
+        # 4. 必访点风险：接单后是否影响必访点安排
+        for visit in policy.required_visits:
+            days = memory.visit_days(visit.lat, visit.lng, visit.radius_km)
+            if len(days) >= visit.days_required:
+                continue
+            days_remaining = (MONTH_HORIZON_MINUTES - finish_minute) // DAY_MINUTES
+            days_still_needed = visit.days_required - len(days)
+            if days_remaining <= days_still_needed + 1:
+                # 时间紧张，接远单可能耽误必访
+                dist_visit = haversine_km(end_lat, end_lng, visit.lat, visit.lng)
+                if dist_visit > 80:
+                    risk += 100
+
+        return risk
 
     def _wait_candidate(
         self,

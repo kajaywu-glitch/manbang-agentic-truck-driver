@@ -1,24 +1,79 @@
 # Claude/Codex 项目交接说明
 
-最后更新：2026-05-29 16:43 +08:00
+最后更新：2026-05-29 19:20 +08:00
 
-本次更新：记录 `mimo/fix-d010-family-task` 已合并到 `main@ec2f92c`，清理旧审阅状态，补充合并后短测结果和下一轮迭代计划。
+本次更新：记录 `mimo/risk-gated-mpc` 分支已创建并推送，实现 Risk-Gated MPC、内置进度显示、Qwen 触发收紧和高罚分约束优化。短测因 Qwen 调用耗时过长超时，需 Codex 审阅后继续迭代。
 
 这份文档是给下一次接手的模型优先阅读的项目状态说明。目标是让新会话不用重新摸索环境、赛题约束和当前策略问题，就能直接继续修改 `demo/agent/`。
 
 **重要：先读 `D:\竞赛\WORKFLOW_MIMO_CODEX.md` 了解协作工作流和分支规则，再读本文档。**
 
-## 当前结论（截至 2026-05-29 16:43 +08:00）
+## 当前结论（截至 2026-05-29 19:20 +08:00）
 
 - 仓库：`D:\竞赛`
 - 远程：`https://github.com/kajaywu-glitch/manbang-agentic-truck-driver.git`
 - 当前稳定分支：`main`
+- 当前工作分支：`mimo/risk-gated-mpc`
 - 已合并分支：`mimo/fix-d010-family-task`
 - 当前同步点：`ec2f92c fix: remove D010 driver_id hardcode, use runtime preferences for family task`
-- 当前 Agent 已能跑通本地仿真短测；合并后已通过 `compileall` 和确定性 `--max-steps 200`。完整 31 天确定性基线需要在合并后重新跑一次。
 - 历史 31 天无模型结果：总净收入 `115,570.25`，总偏好罚分 `16,945`。注意该结果来自删除 D010 hardcode 前的旧分支，只能作为参考，不作为合并后成绩。
 - 当前主路径是确定性滚动规划；`qwen3.5-flash` 已集成到 `planner.py` 主决策流程（rank_cargos、suggest_decision、apply_qwen_hints），但默认不启用（需设置 `AGENT_ENABLE_QWEN35_FLASH=1`）。
-- Codex 审阅结论（2026-05-29 16:43 +08:00）：`mimo/fix-d010-family-task` 的原阻塞点是 `planner.py` 中按 `driver_id == "D010"` 硬编码家事规则。该 hardcode 已删除，并已 fast-forward 合并到 `main`；家事逻辑现完全基于运行时 `preferences` 解析。
+- 本轮 `mimo/risk-gated-mpc` 已实现 Risk-Gated MPC、内置进度显示、Qwen 触发收紧和高罚分约束优化，但短测因 Qwen 调用耗时过长超时（20 步约 5 分钟），需 Codex 审阅后继续迭代。
+
+## 本轮改动（mimo/risk-gated-mpc，2026-05-29 19:20 +08:00）
+
+分支：`mimo/risk-gated-mpc`
+最新 commit：待提交
+
+本轮目标：
+1. 实现 Risk-Gated MPC 硬约束检查
+2. 内置实时进度显示 (AGENT_PROGRESS_STDERR)
+3. 收紧 Qwen 触发条件为稀疏顾问模式
+4. 优化 D009 home-night 和 D010 family 约束
+
+已修改文件：
+- `demo/agent/planner.py`
+- `demo/agent/model_decision_service.py`
+
+主要实现：
+
+1. **Risk-Gated MPC**（`planner.py`）：
+   - 新增 `_estimate_penalty_risk()` 方法，对每个接单候选估算罚分风险
+   - 检查 home-night 回家可达性、家事窗口侵占、休息时间不足、必访点影响
+   - 罚分风险 >= 500 的候选直接拒绝
+
+2. **内置进度显示**（`model_decision_service.py`）：
+   - 支持 `AGENT_PROGRESS_STDERR=1` 环境变量
+   - 每次 `decide()` 后向 stderr 输出 heartbeat
+   - 格式：`[AGENT_PROGRESS] driver=D001 step=12 sim=2026-03-04 14:18 action=take_order reason=best_cargo qwen_reviews=5 elapsed_ms=48720`
+
+3. **Qwen 触发收紧**（`planner.py`）：
+   - `rank_cargos` 只在高风险（home-night/家事/休息/必访点/熟货）且候选不确定时触发
+   - `suggest_decision` 只在候选分数接近（<20%差距）且存在高风险偏好时触发
+   - 默认 `AGENT_QWEN_MAX_REVIEWS` 从 500 降到 100
+
+4. **高罚分约束优化**（`planner.py`）：
+   - `_home_night_action()`：增加动态缓冲、18:00 后主动回家逻辑
+   - `_family_action()`：使用 `home_deadline_minute` 做紧迫性判断
+   - 连续休息检查提前到 `query_cargo` 之前（提前 3 小时）
+
+验证结果：
+- `compileall` 通过
+- `--max-steps 200` 短测因 Qwen 调用耗时过长超时（20 步约 5 分钟）
+- 问题：Qwen 调用仍然过于频繁，每步约 30-50 秒
+
+当前收益/罚分变化：
+- 尚未完成完整 31 天评测，无法对比
+
+仍未解决：
+- Qwen 调用耗时过长，需要进一步收紧触发条件或降低 MAX_REVIEWS
+- 需要跑完整 31 天确定性基线（不启用 Qwen）来对比
+
+希望 Codex 审阅重点：
+1. Risk-Gated MPC 实现是否正确，罚分风险估算是否合理
+2. Qwen 触发条件是否足够紧，为什么仍然频繁调用
+3. 内置进度显示是否符合要求（不改变 action JSON、不泄露密钥）
+4. 高罚分约束优化是否可能引入新问题（如 D009/D010 回退）
 
 ## Windows 环境
 

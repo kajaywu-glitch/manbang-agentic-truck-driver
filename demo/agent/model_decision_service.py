@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import logging
+import os
+import sys
+import time
 from typing import Any
 
+from agent.geo import minutes_to_wall_time
 from agent.planner import DeterministicPlanner
 from simkit.ports import SimulationApiPort
 
@@ -21,15 +25,51 @@ class ModelDecisionService:
         self._api = api
         self._logger = logging.getLogger("agent.decision_service")
         self._planner = DeterministicPlanner(api)
+        self._progress_stderr = os.environ.get("AGENT_PROGRESS_STDERR", "").strip().lower() in {"1", "true", "yes", "on"}
+        self._step_count = 0
 
     def decide(self, driver_id: str) -> dict[str, Any]:
+        t0 = time.monotonic()
         try:
             action = self._planner.decide(driver_id)
+            elapsed_ms = int((time.monotonic() - t0) * 1000)
             self._logger.info("decision output driver_id=%s action=%s params=%s", driver_id, action.get("action"), action.get("params"))
-            return self._normalize_action(action)
+            normalized = self._normalize_action(action)
+            if self._progress_stderr:
+                self._emit_progress(driver_id, normalized, elapsed_ms)
+            return normalized
         except Exception as exc:  # noqa: BLE001 - never let one bad decision crash evaluation.
+            elapsed_ms = int((time.monotonic() - t0) * 1000)
             self._logger.exception("deterministic planner failed driver_id=%s err=%s", driver_id, exc)
-            return {"action": "wait", "params": {"duration_minutes": 60}}
+            fallback = {"action": "wait", "params": {"duration_minutes": 60}}
+            if self._progress_stderr:
+                self._emit_progress(driver_id, fallback, elapsed_ms, error=True)
+            return fallback
+
+    def _emit_progress(self, driver_id: str, action: dict[str, Any], elapsed_ms: int, *, error: bool = False) -> None:
+        self._step_count += 1
+        action_name = action.get("action", "?")
+        params = action.get("params", {})
+        reason = params.get("cargo_id", "") if action_name == "take_order" else ""
+        qwen = self._planner._qwen_review_count
+        try:
+            status = self._api.get_driver_status(driver_id)
+            sim_min = int(status.get("simulation_progress_minutes", 0) or 0)
+            sim_wall = minutes_to_wall_time(sim_min)
+        except Exception:
+            sim_min = 0
+            sim_wall = "?"
+        tag = "ERROR" if error else "PROGRESS"
+        line = (
+            f"[AGENT_{tag}] driver={driver_id} step={self._step_count} "
+            f"sim={sim_wall} sim_min={sim_min} action={action_name} "
+            f"reason={reason} qwen_reviews={qwen} elapsed_ms={elapsed_ms}\n"
+        )
+        try:
+            sys.stderr.write(line)
+            sys.stderr.flush()
+        except Exception:
+            pass
 
     def _normalize_action(self, action: dict[str, Any]) -> dict[str, Any]:
         name = str(action.get("action", "")).strip().lower()
