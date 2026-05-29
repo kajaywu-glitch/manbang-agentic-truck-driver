@@ -115,6 +115,21 @@ set AGENT_ENABLE_QWEN35_FLASH=1
 6. **连续休息仍需前移**：D001/D002/D006/D008/D010 仍有连续休息罚分。优先检查 `query_cargo` 扫描耗时、短 `wait`、夜间回家动作是否把连续休息切碎。
 7. **Qwen 验证不能替代合规修复**：真实 key 验证应继续做，但模型不能掩盖 hardcode。Qwen 只可用于结构化偏好、候选评分和候选复审，最终动作仍由本地合法候选产生。
 
+### 下一轮推荐优化策略
+
+采用 **风险门控滚动规划（Risk-Gated MPC）+ 稀疏 Qwen 顾问**，这是当前阶段最值得做的一轮效果优化。
+
+核心做法：
+
+1. 本地 Planner 先做硬约束可行性检查：家事、home-night、连续休息、熟货、必访点、禁入区。任何会导致高罚分窗口不可达的候选直接判 invalid。
+2. 对剩余候选做 1-3 步短视滚动评分：`expected_net - deadhead_cost - time_cost - penalty_risk + preference_progress_bonus`。重点把“接这单后还能不能回家/休息/到家事点”算进 `penalty_risk`。
+3. 增加 `risk_level`：只有 `home_night`、`family`、`rest`、`required_cargo`、`required_visit`、候选分差很小或本地评分不确定时，才允许 Qwen 介入。
+4. 默认关闭普通场景的 `rank_cargos()`，避免每步都问模型。Qwen 优先做 `suggest_decision()`，只在本地合法候选 index 中选择。
+5. Qwen 输入只给 top 3-5 个候选摘要，限制 `max_tokens`，超时 10-15 秒立即 fallback。`AGENT_QWEN_MAX_REVIEWS` 短测从 20 开始。
+6. 偏好结构化 `preference_hints()` 必须缓存，同一份 preferences 不重复调用。
+
+预期收益：先压低 D009/D010/连续休息这类高罚分，再让 Qwen 处理少数冲突决策；同时显著减少模型调用、超时和 token。
+
 ## 关键文件
 
 - `demo/agent/model_decision_service.py`：官方入口，调用 Planner，并在异常时返回合法 `wait`。
@@ -306,6 +321,21 @@ C:\Users\20689\miniconda3\Scripts\conda.exe run -n mus-tread python main.py --ma
 ```powershell
 Get-Content D:\竞赛\demo\results\monthly_income_202603.json -Raw
 ```
+
+实时看仿真进度：
+
+```powershell
+cd D:\竞赛
+.\scripts\watch_progress.ps1
+```
+
+单次查看当前最新进度：
+
+```powershell
+.\scripts\watch_progress.ps1 -Once
+```
+
+该脚本只读取 `demo/results/logs/simulation_orchestrator.log`，会显示最近的 driver、step、仿真时间、动作和 token。完整 Qwen 测试时必须同时开一个进度窗口，避免长时间不知道跑到哪里。
 
 ## Git 工作流
 

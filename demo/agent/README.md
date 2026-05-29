@@ -129,6 +129,18 @@ D:\竞赛\demo\results\
 - Qwen 验证：用真实 key 跑短测和完整评测，记录 token、耗时、收益、罚分与无模型基线差异。
 - 空驶：`state_tracker.market_heat` 目前不是跨步持久记忆。若继续使用市场热度，需要在 Planner 实例中增加安全缓存，并控制 home-night 司机的远距离空驶。
 
+## 下一轮算法策略
+
+优先实现 **风险门控滚动规划（Risk-Gated MPC）+ 稀疏 Qwen 顾问**：
+
+1. 本地 Planner 先做硬约束：家事、home-night、连续休息、熟货、必访点、禁入区。
+2. 候选评分从单步收益升级为短视滚动后果：接单/等待/空驶后，是否还能满足回家、休息、家事、必访点。
+3. 给每个候选算 `penalty_risk` 和 `preference_progress_bonus`。会破坏高罚分偏好的候选直接 invalid。
+4. Qwen 只在 `risk_level` 高或 `score_gap` 很小时从本地候选 index 中选；普通接单不要频繁 `rank_cargos`。
+5. 限制 Qwen 输入 top 3-5 候选、短 timeout、小 `max_tokens`，失败立即 fallback。
+
+这比“每一步让 Qwen 给货源打分”更可能提高最终成绩，因为主要收益来自降低高罚分和避免模型超时。
+
 ## 真实 Key 验证流程
 
 必须先确保没有 `driver_id` hardcode，再验证 Qwen：
@@ -155,6 +167,21 @@ C:\Users\20689\miniconda3\Scripts\conda.exe run -n mus-tread python calc_monthly
 ```
 
 短测通过标准：无崩溃、无 `validation_error`、日志有模型调用、`monthly_income_202603.json` 中 token 大于 0。不要直接跑完整 Qwen 31 天；先把上限提高到 `50` 做较长短测，并确认没有频繁 60 秒超时。完整评测前必须收紧 Qwen 触发条件，避免普通接单步骤频繁调用 `rank_cargos`。
+
+进度观察：
+
+```powershell
+cd D:\竞赛
+.\scripts\watch_progress.ps1
+```
+
+单次查看：
+
+```powershell
+.\scripts\watch_progress.ps1 -Once
+```
+
+跑完整仿真或 Qwen 短测时建议同时开这个脚本。它只读日志，不影响仿真。
 
 ## 验证命令
 
