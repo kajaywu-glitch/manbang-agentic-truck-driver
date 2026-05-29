@@ -214,6 +214,93 @@ $env:AGENT_QWEN_MAX_REVIEWS = "300"
 - `monthly_income_202603.json` 中 token 用量不为 0，但远低于复赛上限。
 - 启用 Qwen 后必须和确定性基线对比，不只看单次结果。
 
+## Hybrid Agent 启动门槛
+
+Mimo 不需要把确定性策略调到完美后才开始 Hybrid Agent。只要满足下面门槛，就应停止大规模纯规则调参，进入 Qwen3.5-Flash 受控接入阶段。
+
+可以开始 Hybrid Agent 的条件：
+
+- 完整 31 天仿真能跑完。
+- `monthly_income_202603.json` 中没有 `validation_error`。
+- `failed_driver_count = 0`，或失败原因已经定位为非 Agent 主逻辑问题。
+- 10 名司机都有非空动作日志。
+- `ModelDecisionService.decide(driver_id)` 在异常时有合法 fallback。
+- 确定性 Planner 已能生成本地合法候选：`take_order`、`wait`、`reposition` 至少有可解释来源。
+- 主要高罚分点已经能从结果文件定位到规则类别，例如 D009 home-night、D010 家事、连续休息、必访点。
+- 无 key、模型失败、模型返回坏 JSON 时，当前确定性路径仍能独立跑通。
+
+不必等待的条件：
+
+- 不必等所有司机罚分为 0。
+- 不必等 D009/D010 完全修好。
+- 不必等收益调参稳定到最优。
+- 不必等 market_heat 或长期记忆完全成熟。
+
+还不能开始 Hybrid Agent 的情况：
+
+- 仿真会崩溃。
+- 动作 JSON 偶发非法。
+- 存在直接读取 `cargo_dataset.jsonl` / `drivers.json` 的代码。
+- 存在按 `driver_id` 写死策略。
+- 没有模型失败降级路径。
+- Qwen 调用不是通过 `SimulationApiPort.model_chat_completion`。
+
+如果已经满足启动门槛，Mimo 应明确切换任务目标：
+
+```text
+停止继续纯确定性调参。保留当前确定性 Planner 作为 fallback，从现在开始进入 Hybrid Agent 阶段。
+```
+
+## Hybrid Agent 实施计划
+
+阶段 0：冻结确定性底座
+
+- 不再大规模重构确定性规则。
+- 只修会导致崩溃、非法动作、明显绕过硬约束的 bug。
+- 记录当前不开模型的 31 天基线：净收入、总罚分、D009/D010 罚分、运行时间、token=0。
+
+阶段 1：偏好结构化接入
+
+- 启用 `preference_hints()`。
+- 增加或完善 `apply_qwen_hints()`。
+- Qwen 输出只能新增或收紧规则，不能放松正则解析出的约束。
+- 输出必须是 JSON；解析失败直接忽略。
+- 对比启用前后规则对象是否合理，不急着让模型选动作。
+
+阶段 2：候选复审接入
+
+- 确定性 Planner 先生成本地合法候选。
+- Qwen 只能在候选 index 中选择，不能自由生成动作。
+- 只在高风险场景调用：home-night、家事、连续休息、指定熟货、必访点、候选分数接近。
+- 模型选择的候选必须再次经过本地校验。
+- 若模型选择低质量或高风险候选，本地策略可以拒绝并使用确定性首选。
+
+阶段 3：受控评测
+
+- 先跑 `--max-steps 200`，确认模型调用、fallback、日志和 token 统计。
+- 再跑完整 31 天。
+- 产出对比表：不开模型 vs 启用 Qwen。
+- 至少记录：总净收入、总罚分、D009 罚分、D010 罚分、运行时间、token 用量、模型调用次数。
+
+阶段 4：小步调参
+
+- 只调 Qwen 触发条件、候选摘要、拒绝阈值、调用上限。
+- 不把全量 100 条货源原样塞给模型。
+- 不让模型每一步都调用，优先高风险/高不确定性步骤。
+- 每次只改一个变量，保留评测记录。
+
+## Hybrid Agent 约束
+
+- Qwen3.5-Flash 是基座模型，但不是无约束动作生成器。
+- 本地代码仍是安全边界：候选生成、硬约束、动作合法性、fallback 必须在本地。
+- 模型请求必须显式写 `model: "qwen3.5-flash"`。
+- 模型输入只给必要摘要，不给原始全量数据文件。
+- 不提交真实 API key。
+- 不提交 `demo/server/config/config.json`。
+- 不提交 `demo/results/`。
+- 保持复赛 token 上限意识：每司机不超过 500 万 token，总运行时不超过 4 小时。
+- 若启用 Qwen 后罚分上升或运行时间失控，优先收紧触发条件，不要扩大调用范围。
+
 ## 合并到 main 的条件
 
 满足以下条件后，才建议合并：
