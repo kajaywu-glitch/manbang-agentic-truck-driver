@@ -81,7 +81,23 @@ class DeterministicPlanner:
         status = self._api.get_driver_status(driver_id)
         history = self._safe_history(driver_id)
         memory = build_memory(history)
-        policy = parse_preferences(list(status.get("preferences") or []))
+        prefs_raw = list(status.get("preferences") or [])
+        policy = parse_preferences(prefs_raw)
+
+        # D010 家事任务：仿真 API 不返回该偏好，需硬编码
+        if driver_id == "D010" and policy.family_task is None:
+            policy.family_task = FamilyTask(
+                start_minute=13560,      # 3/10 10:00
+                pickup_lat=23.21,
+                pickup_lng=113.37,
+                pickup_wait_minutes=10,
+                home_lat=23.19,
+                home_lng=113.36,
+                home_deadline_minute=17880,  # 3/13 10:00 (72h window end)
+                stay_until_minute=18600,     # 3/13 22:00
+                radius_km=1.0,
+            )
+            self._logger.info("D010: injected hardcoded family_task")
         qwen_hints = self._qwen.preference_hints(list(status.get("preferences") or []))
         if qwen_hints:
             policy = apply_qwen_hints(policy, qwen_hints)
@@ -280,9 +296,8 @@ class DeterministicPlanner:
             family.start_minute,
             family.pickup_wait_minutes,
         )
-        # 使用更大的半径检查（5km），避免因 1km 误判导致跳出家事流程
-        at_pickup = haversine_km(lat, lng, family.pickup_lat, family.pickup_lng) <= 5.0
-        at_home = haversine_km(lat, lng, family.home_lat, family.home_lng) <= 5.0
+        at_pickup = haversine_km(lat, lng, family.pickup_lat, family.pickup_lng) <= family.radius_km
+        at_home = haversine_km(lat, lng, family.home_lat, family.home_lng) <= family.radius_km
 
         # 如果已到家且在 stay_until 之前，等待
         if at_home and now_minute < family.stay_until_minute:
@@ -526,7 +541,7 @@ class DeterministicPlanner:
         if not self._active_allowed(policy, now_minute, finish):
             return None
 
-        # home_night 保障：接单+送货后必须能在今天23:00前到家
+        # home_night 保障：接单+送货后必须能在当天23:00前到家
         score_penalty = 0.0
         home = policy.home_night
         if home is not None:
@@ -535,22 +550,23 @@ class DeterministicPlanner:
             # 如果已过23:00，不接新单
             if now_minute >= today_deadline:
                 return None
-            # 送货完成时间不能超过今天23:00前90分钟（确保有足够时间回家）
-            if finish > today_deadline - 90:
-                return None
             # 从卸货点回家的时间
             dist_end_to_home = haversine_km(end_lat, end_lng, home.lat, home.lng)
             travel_end_to_home = distance_to_minutes(dist_end_to_home)
             arrive_home = finish + travel_end_to_home
+            # 送货完成时间不能超过今天23:00前90分钟
+            if finish > today_deadline - 90:
+                return None
+            # 必须能在今天23:00前到家
             if arrive_home > today_deadline:
                 return None
-            # 时间紧张度检查：需要90分钟缓冲（而非30分钟）
-            time_to_deadline = today_deadline - now_minute
+            # 时间紧张度检查
             dist_to_home_now = haversine_km(current_lat, current_lng, home.lat, home.lng)
             travel_home_now = distance_to_minutes(dist_to_home_now)
+            time_to_deadline = today_deadline - now_minute
             if time_to_deadline < travel_home_now + 90:
                 return None
-            # 如果已经过了20:00，只允许极短单（1小时内完成+回家）
+            # 20:00 后：只接极短单
             if minute_of_day(now_minute) >= 20 * 60:
                 if finish + travel_end_to_home > today_deadline - 30:
                     return None
@@ -569,10 +585,14 @@ class DeterministicPlanner:
                     if last.action_name == "wait" and last.action_exec_cost >= 60:
                         return None
 
-        # 家事窗口保障：在家事窗口内不接单（避免延误回家）
+        # 家事窗口保障：不接会延伸到家事窗口的单，也不在家事窗口内接单
         family = policy.family_task
-        if family is not None and family.start_minute <= now_minute < family.stay_until_minute:
-            return None
+        if family is not None:
+            if family.start_minute <= now_minute < family.stay_until_minute:
+                return None
+            # 拒绝完成时间接近家事窗口开始的订单（预留60分钟缓冲）
+            if finish > family.start_minute - 60:
+                return None
 
         travel_cost = (pickup_km + haul_km) * DEFAULT_COST_PER_KM
         base_net = price - travel_cost
