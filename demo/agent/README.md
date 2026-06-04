@@ -1,253 +1,86 @@
 # Agent 实现说明
 
-最后更新：2026-05-29 19:42 +08:00
-
-本次更新：记录 `mimo/risk-gated-mpc@0476fb1` 已经 Codex 审查并补充 Qwen 限流修正：`max_tokens`、rank 候选数 5、默认 `AGENT_QWEN_MAX_REVIEWS=20`、家事 deadline 修正。下一步先完整确定性基线，再做低额度真实 Qwen 短测和评测进度面板。
-
-本目录是当前比赛项目的主要修改面。官方入口仍是 `ModelDecisionService.decide(driver_id)`，外部评测进程会注入 `SimulationApiPort`。
+最后更新：2026-06-04
 
 ## 当前架构
 
-- `model_decision_service.py`：入口、动作归一化、异常兜底。
-- `planner.py`：确定性滚动规划，负责紧急约束、查询货源、候选评分、等待和空驶。
+- `model_decision_service.py`：入口、动作归一化、异常兜底、进度显示。
+- `planner.py`：Risk-Gated MPC 确定性滚动规划，负责紧急约束、查询货源、候选评分、等待和空驶。
 - `preference_rules.py`：把运行时 `preferences` 文本解析为 `PreferencePolicy`。
-- `state_tracker.py`：从 `query_decision_history` 重建累计接单数、休息段、空驶里程、到访天数等。
+- `state_tracker.py`：从 `query_decision_history` 重建累计接单数、休息段、空驶里程、到访天数、连续工作时长等。
 - `geo.py`：时间和地理计算工具。
-- `llm_helper.py`：可选 Qwen3.5-Flash 偏好结构化接口。
+- `llm_helper.py`：可选 Qwen3.5-Flash 偏好结构化、货源评分和候选复审接口。
 
-## 基座模型
+## 算法策略：Risk-Gated MPC + 稀疏 Qwen 顾问
 
-复赛建议基座模型已锁定为 `qwen3.5-flash`。当前策略默认不依赖模型，保证没有真实 API key 时也能完成本地仿真；设置 `AGENT_ENABLE_QWEN35_FLASH=1` 后，Qwen3.5-Flash 已可参与偏好结构化、货源评分和候选动作复审。
+### 核心思路
 
-启用模型时只通过官方端口：
+1. 本地 Planner 先做硬约束可行性检查：家事、home-night、连续休息、熟货、必访点、禁入区。
+2. 对剩余候选做短视滚动评分：`expected_net - deadhead_cost - time_cost - penalty_risk + preference_progress_bonus`。
+3. 增加 `risk_level`：只有高风险偏好且候选分数接近时，才允许 Qwen 介入。
+4. Qwen 只做偏好结构化、货源评分和候选裁决提示，最终动作仍由本地代码校验。
 
-```python
-SimulationApiPort.model_chat_completion(payload)
-```
+### Risk-Gated MPC
 
-启用方式：
+- `_estimate_penalty_risk()`：对每个接单候选估算罚分风险。
+- 检查 home-night 回家可达性、家事窗口侵占、休息时间不足、必访点影响。
+- 罚分风险 >= 500 的候选直接拒绝。
 
-```powershell
-cd D:\竞赛
-.\scripts\load_local_env.ps1
-```
+### 约束处理
 
-真实 key 填在 `D:\竞赛\.env.local`。该文件已被 `.gitignore` 忽略，不能提交；加载脚本不会打印 key，只会提示 `key_present=True/False`。必须在同一个 PowerShell 终端里加载后再运行仿真。
+- **D009 home-night**：16:00 后限卸货点距家 60km，18:00 后限 30km，20:00 后不接单。15:00/17:00/19:00 主动 reposition 回家。
+- **D010 家事**：48 小时前瞻预警（60% 阈值），6 小时强制前往接人点，通用完成时间检查（完成+赶路 > 家事开始-2h → 拒绝）。家事窗口内不接单。
+- **连续休息**：提前 4 小时触发休息，使用完整休息时长确保连续性。硬性截止：当天剩余时间不足 → 拒绝接单。空驶时如果需要休息则跳过空驶。
+- **必访点**：月度前瞻，剩余天数紧张时更积极安排。
 
-模型只允许做偏好结构化、货源评分或少量候选裁决提示，最终动作仍必须由本地代码校验。
+### Qwen3.5-Flash 集成
 
-## Qwen3.5-Flash 集成状态
+- `preference_hints()`：结构化偏好文本，`apply_qwen_hints()` 只允许收紧规则。
+- `rank_cargos()`：对候选货源评分，与确定性分数融合（alpha=0.35）。
+- `suggest_decision()`：在高风险或分数接近时从本地候选中选择。
+- 冷却期：`rank_cargos` 至少间隔 10 步，`suggest_decision` 至少间隔 5 步。
+- 安全降级：模型调用失败时完全回退确定性逻辑。
 
-当前主线 `main@ec2f92c` 已完成主流程接入：
+## 评测结果
 
-- `preference_hints()` 会请求结构化偏好，`apply_qwen_hints()` 只允许新增或收紧规则。
-- `rank_cargos()` 可对候选货源给模型评分，并与确定性分数融合。
-- `suggest_decision()` 可在高风险或分数接近时从本地候选动作中选择 index。
-- `AGENT_QWEN_MAX_REVIEWS` 控制模型调用次数，默认值见 `planner.py`。
-- 截至 2026-05-29 19:42 +08:00，Qwen payload 已设置 `max_tokens`，`rank_cargos()` 只给前 5 个候选；真实 key 测试必须先从 `AGENT_QWEN_MAX_REVIEWS=5` 开始，不要直接完整 31 天。
-- 模型失败、超时、坏 JSON 或越界 index 时，必须回退确定性策略。
+### 确定性基线（无 Qwen，2026-06-04）
 
-尚未完成：
+| 司机 | 净收入 | 罚分 | 主要约束 |
+|------|------:|-----:|---------|
+| D001 | 13,810 | 300 | 每日连续休息 8h（深圳范围） |
+| D002 | 19,238 | 1,800 | 每日连续休息 4h + 无成交日 |
+| D003 | 830 | 0 | 月度空驶 ≤100km |
+| D004 | 15,024 | 0 | 首单 ≤12:00 + 每日 ≤3 单 |
+| D005 | 17,052 | 0 | 装卸距离 ≤100km |
+| D006 | 16,258 | 1,200 | 每日连续休息 5h + 完全不出车日 |
+| D007 | 19,721 | 0 | 23-04 不接单 + 无成交日 |
+| D008 | 20,555 | 1,600 | 平日连续休息 4h + 完全不出车日 |
+| D009 | 10,478 | 900 | 每日 23:00 前到家 + 熟货 240646 |
+| D010 | 19,572 | 6,270 | 家事 3/10-3/13 + 每日休息 3h + 必访点 |
 
-- 本机 `.env.local` 已由用户填写真实 key，格式脱敏检查通过；该文件被 Git 忽略，不能提交。
-- 需要在删除 D010 hardcode 后，用真实 key 跑 `AGENT_ENABLE_QWEN35_FLASH=1` 的短测。
-- 需要比较“不开模型”和“启用 Qwen”的完整 31 天结果、token 与耗时。
+**总计：净收入 152,536，罚分 12,070**
 
-## Hybrid Agent 启动标准
+### 已知限制
 
-不要无限继续纯确定性调参。满足以下条件后，就可以开始 Hybrid Agent 构建：
+1. **D010 家事迟到**（3,570 罚分）：家事偏好在 3/10 10:00 才可见，但司机在之前已接长单，无法提前规避。
+2. **D002/D006/D008 休息违规**：Agent 倾向于连续接单后安排短休息，而非在接单间插入完整休息。
+3. **market_heat 跨步记忆**：当前只在当前决策步内累积，不做跨步持久化。
 
-- 31 天完整仿真可跑完。
-- 无 `validation_error`。
-- 无仿真崩溃。
-- 动作日志非空。
-- 无 key 时确定性策略可独立运行。
-- 主要罚分来源可解释。
-- 本地候选生成和 fallback 已稳定。
-
-无需等待所有罚分清零。D009/D010 仍有罚分也可以开始 Hybrid，因为 Qwen3.5-Flash 正应该参与这类高风险偏好理解和候选复审。
-
-Hybrid 第一版只做受控接入：
-
-1. Qwen 结构化偏好，结果只允许收紧规则。
-2. 确定性 Planner 生成本地合法候选。
-3. Qwen 只在高风险或分数接近时从候选 index 中选择。
-4. 本地代码复核模型选择，失败则回退确定性首选。
-5. 先短测，再完整 31 天，和不开 Qwen 的基线对比。
-
-禁止事项：
-
-- 不让 Qwen 直接输出最终动作。
-- 不把全量货源或原始数据文件交给模型。
-- 不因为接入 Qwen 破坏无 key fallback。
-- 不把 Qwen 调用扩展到每一步、每条货源，除非 token 和耗时已被证明可控。
-
-## 当前策略流程
-
-1. `get_driver_status(driver_id)` 获取位置、时间、偏好。
-2. `query_decision_history(driver_id, -1)` 重建运行时状态。
-3. 解析偏好文本，得到休息、禁行、距离、家事、熟货、必访点等规则；启用 Qwen 时再保守合并模型 hints。
-4. 先执行紧急约束：家事、熟货定位、每日回家、禁行窗口、整天休息/不接单、必访点、临近休息。
-5. 若无紧急动作，调用 `query_cargo` 查询当前位置候选货源。
-6. 评估接单候选：装货窗、车型、成本、收益、偏好风险、目的地机会价值；启用 Qwen 时可融合模型货源评分。
-7. 同时生成等待候选和保守空驶候选。
-8. 选择最高分合法动作；启用 Qwen 且命中复审条件时让模型在本地候选中选 index；异常时由入口兜底为 `wait(60)`。
-
-## 当前完整评测（截至 2026-05-29 16:43 +08:00）
-
-最近已计算的 31 天结果来自删除 D010 hardcode 前的旧分支无模型运行，结果文件在本地忽略目录：
-
-```text
-D:\竞赛\demo\results\
-```
-
-摘要：
-
-- `failed_driver_count = 0`
-- 无 `validation_error`
-- `total_token_usage = 0`
-- `total_net_income_all_drivers = 115570.25`
-- `total_preference_penalty = 16945`
-
-截至 2026-05-29 16:43 +08:00，此前的 `driver_id == "D010"` 硬编码注入 `FamilyTask` 已删除，并已合并到 `main`。家事逻辑现完全基于运行时 `preferences` 解析。合并后需重跑 31 天确认新基线。
-
-罚分集中点：
-
-- D009：每日 23 点前到家 10 次违规，罚分 9,000，净收入仅 514。
-- D010：旧结果中家事罚分 1,645 + 休息 600，净收入 -6,567；该结果来自删除 hardcode 前的旧分支，只能作为历史对比。当前 `main` 需重跑确认合规结果。
-- D001/D002/D006/D008/D010：连续休息仍有罚分；D008 另有 1 次食品饮料软偏好罚分。
-
-## 合并后剩余风险（截至 2026-05-29 16:43 +08:00）
-
-- ~~`planner.py` 不能保留 `if driver_id == "D010"` 这类策略分支~~ **2026-05-29 已解决**，hardcode 已删除。
-- D010 家事偏好并非完全不可见：在 2026-03-10 10:00 后，`get_driver_status()` 会把该偏好放入 `preferences`，现有 `parse_preferences()` 能解析出 `FamilyTask`。
-- 家事修复方向应是增强通用逻辑：偏好可见后立即执行接配偶、回家、等待到 `stay_until_minute`，并在 `_evaluate_cargo()` 中拒绝会覆盖已知家事窗口的订单。
-- `_family_action()` 后续应使用 `home_deadline_minute` 判断 22:00 前进家门的风险，而不是只等到 `stay_until_minute`。
-- 家事、home-night、连续休息都应尽量在 `query_cargo` 前返回动作，避免查询货源消耗仿真时间后再补救。
-
-## 下一步修改入口（截至 2026-05-29 16:43 +08:00）
-
-- 基线（更新于 2026-05-29 19:42 +08:00）：先在合并后的 `main` 重跑确定性完整 31 天和收益计算，得到 Risk-Gated MPC 后的新基线。
-- D010：~~先删除 hardcode~~ 已完成。下一步加强 `_family_action()` 使用 `home_deadline_minute` 做紧迫性判断，重新验证 D010 家事 sequence、到家时长和收益。
-- D009：继续定位未回家日期，避免远距离接单/空驶导致 23 点前无法回家；注意不要因为修 D010 让 D009 继续恶化。
-- 必访点：`planner._urgent_action()` 中 required visit 逻辑需要更早安排，不能只在剩余天数紧张时抢救。
-- 连续休息：把休息判断尽量前移到查询货源之前，避免 `query_cargo` 消耗时间切碎休息窗口。
-- Qwen 验证：用真实 key 先跑低额度短测，记录 token、耗时、收益、罚分与无模型基线差异；只有 token 和耗时可控，才允许扩大步数。
-- 进度显示：下一轮要从普通 heartbeat 升级为评测进度面板，显示当前司机、当前仿真日期、已完成司机、累计 token、是否正在等待模型、已完成司机阶段摘要。
-- 空驶：`state_tracker.market_heat` 目前不是跨步持久记忆。若继续使用市场热度，需要在 Planner 实例中增加安全缓存，并控制 home-night 司机的远距离空驶。
-
-## 下一轮算法策略
-
-优先实现 **风险门控滚动规划（Risk-Gated MPC）+ 稀疏 Qwen 顾问**：
-
-1. 本地 Planner 先做硬约束：家事、home-night、连续休息、熟货、必访点、禁入区。
-2. 候选评分从单步收益升级为短视滚动后果：接单/等待/空驶后，是否还能满足回家、休息、家事、必访点。
-3. 给每个候选算 `penalty_risk` 和 `preference_progress_bonus`。会破坏高罚分偏好的候选直接 invalid。
-4. Qwen 只在 `risk_level` 高或 `score_gap` 很小时从本地候选 index 中选；普通接单不要频繁 `rank_cargos`。
-5. 限制 Qwen 输入 top 3-5 候选、短 timeout、小 `max_tokens`，失败立即 fallback。
-
-这比“每一步让 Qwen 给货源打分”更可能提高最终成绩，因为主要收益来自降低高罚分和避免模型超时。
-
-## 内置进度显示计划
-
-旁路脚本 `scripts/watch_progress.ps1` 已能看日志，但下一轮需要在 Agent/本地仿真启动时内置实时进度输出。
-
-建议接口：
+## 启用 Qwen
 
 ```powershell
-$env:AGENT_PROGRESS_STDERR = "1"
-$env:AGENT_PROGRESS_EVERY_STEPS = "1"
-```
-
-实现约束：
-
-- 只输出到 `stderr` 或 logging，不改变 action JSON。
-- 每次 `decide()` 后输出一行：driver、历史 step、仿真时间、action、reason、Qwen 调用类型、token、本轮耗时。
-- 默认不输出密钥、prompt、完整货源列表。
-- 适合放在 `model_decision_service.py` 外层或新增 `progress.py`，避免污染核心规划逻辑。
-- 如果选择改 `demo/server/bench`，只能增加本地 runner heartbeat，不能改评分逻辑。
-
-## 真实 Key 验证流程
-
-当前已确保没有 D010 `driver_id` hardcode；验证 Qwen 前先限制调用次数：
-
-```powershell
-cd D:\竞赛
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-.\scripts\load_local_env.ps1
+$env:DASHSCOPE_API_KEY = "your-api-key"
+$env:TIANCHI_MODEL_API_KEY = $env:DASHSCOPE_API_KEY
+$env:AGENT_ENABLE_QWEN35_FLASH = "1"
 $env:AGENT_QWEN_MAX_REVIEWS = "20"
-```
 
-短测：
-
-```powershell
-cd D:\竞赛\demo\server
-C:\Users\20689\miniconda3\Scripts\conda.exe run -n mus-tread python main.py --max-steps 200
-```
-
-收益与 token 检查：
-
-```powershell
-cd D:\竞赛\demo
-C:\Users\20689\miniconda3\Scripts\conda.exe run -n mus-tread python calc_monthly_income.py
-```
-
-短测通过标准：无崩溃、无 `validation_error`、日志有模型调用、`monthly_income_202603.json` 中 token 大于 0。不要直接跑完整 Qwen 31 天；先把上限提高到 `50` 做较长短测，并确认没有频繁 60 秒超时。完整评测前必须收紧 Qwen 触发条件，避免普通接单步骤频繁调用 `rank_cargos`。
-
-进度观察：
-
-```powershell
-cd D:\竞赛
-.\scripts\watch_progress.ps1
-```
-
-单次查看：
-
-```powershell
-.\scripts\watch_progress.ps1 -Once
-```
-
-跑完整仿真或 Qwen 短测时建议同时开这个脚本。它只读日志，不影响仿真。
-
-## 验证命令
-
-编译：
-
-```powershell
-C:\Users\20689\miniconda3\Scripts\conda.exe run -n mus-tread python -m compileall -q D:\竞赛\demo
-```
-
-短测：
-
-```powershell
-cd D:\竞赛\demo\server
-C:\Users\20689\miniconda3\Scripts\conda.exe run -n mus-tread python main.py --max-steps 200
-```
-
-完整 31 天仿真需要本地 `demo/server/config/config.json` 中：
-
-```json
-"simulation_duration_days": 31
-```
-
-完整仿真：
-
-```powershell
-cd D:\竞赛\demo\server
-C:\Users\20689\miniconda3\Scripts\conda.exe run -n mus-tread python main.py
-```
-
-收益计算：
-
-```powershell
-cd D:\竞赛\demo
-$env:PYTHONIOENCODING = "utf-8"
-C:\Users\20689\miniconda3\Scripts\conda.exe run -n mus-tread python calc_monthly_income.py
+cd demo/server
+python main.py
 ```
 
 ## 禁止事项
 
-- 不要读取 `demo/server/data/cargo_dataset.jsonl`。
-- 不要读取 `demo/server/data/drivers.json`。
-- 不要按 `driver_id` 写死策略。
-- 不要提交真实 API key、`demo/server/config/config.json`、`demo/results/`。
+- 不读取 `demo/server/data/cargo_dataset.jsonl`。
+- 不读取 `demo/server/data/drivers.json`。
+- 不按 `driver_id` 写死策略。
+- 不提交真实 API key。

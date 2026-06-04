@@ -92,6 +92,20 @@ class DriverMemory:
                 days.add(rec.step_end // DAY_MINUTES)
         return days
 
+    def continuous_work_minutes(self, now_minute: int) -> int:
+        """计算从上次有效休息（wait >= 60 分钟）结束到现在连续工作了多久。"""
+        last_rest = self.last_rest_end_minute()
+        if last_rest < 0:
+            return now_minute  # 从未休息过
+        return max(0, now_minute - last_rest)
+
+    def last_rest_end_minute(self) -> int:
+        """找到最近一次有效休息（wait >= 60 分钟）的结束时间。无记录返回 -1。"""
+        for rec in reversed(self.records):
+            if rec.action_name == "wait" and rec.action_exec_cost >= 60:
+                return rec.step_end
+        return -1
+
     def record_market_observation(self, lat: float, lng: float, net_value: float, price: float) -> None:
         """记录一次货源观察到 market_heat。"""
         grid = (int(lat * 2), int(lng * 2))  # 0.5 度网格

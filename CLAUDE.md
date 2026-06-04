@@ -1,22 +1,17 @@
 # Claude/Codex 项目交接说明
 
-最后更新：2026-05-29 19:42 +08:00
+最后更新：2026-06-04 10:45 +08:00
 
-本次更新：记录 Codex 对 `mimo/risk-gated-mpc@0476fb1` 的审查结论和修正：补充 Qwen 输出限长、降低默认调用上限、缩小 rank 候选数、修正 D010 family deadline 路径，并明确下一轮目标是完整确定性基线、低额度 Qwen 短测和评测进度显示。
+本次更新：完成第二轮优化——家事窗口保护增强（48h 前瞻 + 6h 强制 + 通用完成时间检查）、休息硬性截止、空驶休息互斥、连续工作追踪。确定性 31 天结果：总净收入 152,536 元，总罚分 12,070 元。
 
 这份文档是给下一次接手的模型优先阅读的项目状态说明。目标是让新会话不用重新摸索环境、赛题约束和当前策略问题，就能直接继续修改 `demo/agent/`。
 
-**重要：先读 `D:\竞赛\WORKFLOW_MIMO_CODEX.md` 了解协作工作流和分支规则，再读本文档。**
+## 当前结论（截至 2026-06-04 10:45 +08:00）
 
-## 当前结论（截至 2026-05-29 19:42 +08:00）
-
-- 仓库：`D:\竞赛`
-- 远程：`https://github.com/kajaywu-glitch/manbang-agentic-truck-driver.git`
+- 仓库：`G:\manbang-agentic-truck-driver-main\manbang-agentic-truck-driver-main`
 - 当前稳定分支：`main`
-- 当前审查分支：`mimo/risk-gated-mpc`
-- 已合并分支：`mimo/fix-d010-family-task`、`mimo/risk-gated-mpc`
-- 当前同步点：`ec2f92c fix: remove D010 driver_id hardcode, use runtime preferences for family task`
-- 历史 31 天无模型结果：总净收入 `115,570.25`，总偏好罚分 `16,945`。注意该结果来自删除 D010 hardcode 前的旧分支，只能作为参考，不作为合并后成绩。
+- 当前同步点：`fc34b47 feat: implement Risk-Gated MPC with Qwen3.5-Flash integration`
+- 最新确定性 31 天结果：总净收入 `152,536`，总偏好罚分 `12,070`。
 - 当前主路径是确定性滚动规划；`qwen3.5-flash` 已集成到 `planner.py` 主决策流程（rank_cargos、suggest_decision、apply_qwen_hints），但默认不启用（需设置 `AGENT_ENABLE_QWEN35_FLASH=1`）。
 - 本轮 `mimo/risk-gated-mpc` 已实现 Risk-Gated MPC、内置进度显示、Qwen 触发收紧和高罚分约束优化。Codex 审查发现 0476fb1 仍会高频长输出调用 Qwen，已补充限长和进一步收紧；关闭 Qwen 的 `--max-steps 50` 通过，完整 31 天仍待重跑。
 
