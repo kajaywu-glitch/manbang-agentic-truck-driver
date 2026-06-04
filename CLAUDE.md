@@ -2,7 +2,7 @@
 
 最后更新：2026-06-04 10:45 +08:00
 
-本次更新：完成第二轮优化——家事窗口保护增强（48h 前瞻 + 6h 强制 + 通用完成时间检查）、休息硬性截止、空驶休息互斥、连续工作追踪。确定性 31 天结果：总净收入 152,536 元，总罚分 12,070 元。
+本次更新：完成第二轮优化——家事窗口保护增强（48h 前瞻 + 6h 强制 + 通用完成时间检查）、休息硬性截止、空驶休息互斥、连续工作追踪。Codex 合并前复跑确定性 31 天通过：总净收入 152,340.69 元，总罚分 12,870 元，失败司机 0，token 0。
 
 这份文档是给下一次接手的模型优先阅读的项目状态说明。目标是让新会话不用重新摸索环境、赛题约束和当前策略问题，就能直接继续修改 `demo/agent/`。
 
@@ -10,10 +10,10 @@
 
 - 仓库：`G:\manbang-agentic-truck-driver-main\manbang-agentic-truck-driver-main`
 - 当前稳定分支：`main`
-- 当前同步点：`fc34b47 feat: implement Risk-Gated MPC with Qwen3.5-Flash integration`
-- 最新确定性 31 天结果：总净收入 `152,536`，总偏好罚分 `12,070`。
+- 当前审阅分支：`mimo/second-round-optimization`
+- 最新确定性 31 天结果：总净收入 `152,340.69`，总偏好罚分 `12,870`，`failed_driver_count = 0`，`total_token_usage = 0`。
 - 当前主路径是确定性滚动规划；`qwen3.5-flash` 已集成到 `planner.py` 主决策流程（rank_cargos、suggest_decision、apply_qwen_hints），但默认不启用（需设置 `AGENT_ENABLE_QWEN35_FLASH=1`）。
-- 本轮 `mimo/risk-gated-mpc` 已实现 Risk-Gated MPC、内置进度显示、Qwen 触发收紧和高罚分约束优化。Codex 审查发现 0476fb1 仍会高频长输出调用 Qwen，已补充限长和进一步收紧；关闭 Qwen 的 `--max-steps 50` 通过，完整 31 天仍待重跑。
+- 本轮 `mimo/second-round-optimization` 在 Risk-Gated MPC 基础上继续收紧家事、home-night、休息与 Qwen 冷却逻辑；关闭 Qwen 的完整 31 天仿真和 `calc_monthly_income.py` 已通过。
 
 ## 本轮改动与审查修正（mimo/risk-gated-mpc，2026-05-29 19:42 +08:00）
 
@@ -62,7 +62,7 @@ Codex 审查修正：见 `0476fb1` 之后的最新提交。
 - 尚未完成完整 31 天评测，无法对比
 
 仍未解决：
-- 需要跑完整 31 天确定性基线（不启用 Qwen）来对比。
+- 真实 key 的低额度 Qwen 短测仍待执行；确定性完整 31 天基线已在合并前复跑通过。
 - 需要用真实 key 做低额度 Qwen 短测：`AGENT_QWEN_MAX_REVIEWS=5` 起步，先跑 `--max-steps 50/100`，确认 `max_tokens` 是否有效压住 completion/reasoning token。
 - 当前内置 heartbeat 只显示 driver/step/sim/action/qwen_reviews/elapsed；下一轮要补成用户需要的评测进度：当前司机、当前仿真日期、已完成司机、总步数/最大步数、累计 token、是否正在等待模型、已完成司机的阶段摘要。
 
