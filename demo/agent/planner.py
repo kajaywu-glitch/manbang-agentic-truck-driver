@@ -687,7 +687,7 @@ class DeterministicPlanner:
         base_net = price - travel_cost
         total_minutes = max(1, finish - now_minute)
         net_per_hour = base_net / (total_minutes / 60.0)
-        score = base_net + 0.25 * net_per_hour - pickup_km * 0.35 - wait_minutes * 0.08
+        score = base_net + 0.5 * net_per_hour - pickup_km * 0.35 - wait_minutes * 0.08
 
         # Risk-Gated MPC: penalty_risk 估算 — 接单后是否还能满足硬约束
         penalty_risk = self._estimate_penalty_risk(
