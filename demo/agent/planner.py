@@ -272,8 +272,9 @@ class DeterministicPlanner:
         rest_remaining = needs_rest_today(policy, memory, now_minute)
         if rest_remaining > 0:
             rest_minutes = int(policy.daily_rest_minutes or 0)
-            # Pre-trigger = max(4h, rest_minutes) — proportional to rest need
-            pre_trigger = max(240, rest_minutes)
+            # Pre-trigger = max(4h, rest_minutes + 2h) — aggressive early rest
+            # to ensure continuous rest isn't fragmented by late-day cargo
+            pre_trigger = max(240, rest_minutes + 120)
 
             # Early-morning rest continuation: if the last action was a
             # substantial wait extending to or past midnight, keep resting
@@ -937,9 +938,9 @@ class DeterministicPlanner:
         reason = chosen.reason or ""
         mod = minute_of_day(now_minute)
 
-        # Home-night: only trigger in afternoon/evening when time pressure exists
-        if policy.home_night is not None and mod >= 15 * 60:
-            if "home_night" in reason or chosen.action.get("action") == "take_order":
+        # Home-night: trigger from 14:00 onward when time pressure builds
+        if policy.home_night is not None and mod >= 14 * 60:
+            if chosen.action.get("action") in ("take_order", "reposition", "wait"):
                 return "home_night"
 
         # Rest: trigger when rest is still needed today
