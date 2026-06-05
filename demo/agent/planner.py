@@ -314,7 +314,13 @@ class DeterministicPlanner:
         at_home = haversine_km(lat, lng, family.home_lat, family.home_lng) <= family.radius_km
 
         # 如果已到家且在 stay_until 之前，等待（这是硬约束，必须等到 stay_until）
+        # 但需要确保当天获得足够的连续休息（不能只等待到午夜让当天休息不足）
         if at_home and now_minute < family.stay_until_minute:
+            rest_needed_today = max(0, int(policy.daily_rest_minutes or 0) - memory.longest_rest_today(now_minute))
+            today_remaining = max(0, day_end(now_minute) - now_minute)
+            # If today has less remaining time than needed rest, wait at least to day_end
+            if rest_needed_today > 0 and today_remaining < rest_needed_today:
+                return self._wait(max(rest_needed_today, today_remaining))
             return self._wait(max(60, family.stay_until_minute - now_minute))
 
         # 如果已过 stay_until，家事完成
@@ -323,11 +329,13 @@ class DeterministicPlanner:
 
         # home_deadline 紧迫性检查：接到人后如果 deadline 紧张，立即回家。
         # 未接配偶时仍必须先接人，否则会触发更高的固定罚分。
+        # 缓冲时间需至少满足当日连续休息需求，避免到家当天休息不足。
         if pickup_done and not at_home and family.home_deadline_minute > 0:
             dist_home = haversine_km(lat, lng, family.home_lat, family.home_lng)
             travel_home = distance_to_minutes(dist_home)
             time_to_deadline = family.home_deadline_minute - now_minute
-            if time_to_deadline <= travel_home + 60:
+            rest_buffer = max(60, int(policy.daily_rest_minutes or 0))
+            if time_to_deadline <= travel_home + rest_buffer:
                 return {"action": "reposition", "params": {"latitude": family.home_lat, "longitude": family.home_lng}}
 
         # 永远先接配偶（跳过会导致 9000 固定罚分，远比迟到罚分严重）
@@ -341,7 +349,12 @@ class DeterministicPlanner:
             return {"action": "reposition", "params": {"latitude": family.home_lat, "longitude": family.home_lng}}
 
         # 到家后等待到 stay_until（硬约束，必须等到）
+        # 确保今天有足够的连续休息
         if now_minute < family.stay_until_minute:
+            rest_needed_today = max(0, int(policy.daily_rest_minutes or 0) - memory.longest_rest_today(now_minute))
+            today_remaining = max(0, day_end(now_minute) - now_minute)
+            if rest_needed_today > 0 and today_remaining < rest_needed_today:
+                return self._wait(max(rest_needed_today, today_remaining))
             return self._wait(max(60, family.stay_until_minute - now_minute))
         return None
 
