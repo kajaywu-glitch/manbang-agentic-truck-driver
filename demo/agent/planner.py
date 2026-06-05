@@ -606,15 +606,19 @@ class DeterministicPlanner:
         # home_night 保障：接单+送货后必须能在当天23:00前到家
         score_penalty = 0.0
         home = policy.home_night
+        is_required_cargo = self._is_required_cargo(policy, memory, cargo_id)
         if home is not None:
             today_base = now_minute - minute_of_day(now_minute)
             today_deadline = today_base + home.deadline_minute_of_day
             # 如果已过23:00，不接新单
             if now_minute >= today_deadline:
                 return None
-            # 跨日修正：如果完单在明天，用明天的 deadline
+            # 只有指定必接货源允许跨过当天 deadline：这是用可控 home-night 罚分换
+            # 高额熟货损失的显式策略，普通订单必须当天 23:00 前回家。
             effective_deadline = today_deadline
             if finish > today_deadline:
+                if not is_required_cargo:
+                    return None
                 tomorrow_base = today_base + DAY_MINUTES
                 effective_deadline = tomorrow_base + home.deadline_minute_of_day
                 if finish > effective_deadline:
@@ -652,10 +656,7 @@ class DeterministicPlanner:
                 latest_rest_start = self._latest_rest_start(policy, now_minute)
                 # 硬性截止：已过最晚休息开始时间，不再接单（紧急货物除外）
                 if minute_of_day(now_minute) >= latest_rest_start:
-                    rc = policy.required_cargo
-                    is_required = (rc is not None and not memory.has_taken_cargo(rc.cargo_id)
-                                   and cargo_id == rc.cargo_id)
-                    if not is_required:
+                    if not is_required_cargo:
                         return None
                 # 计算接单后到当天结束的可用时间（含回家时间）
                 travel_home_after = 0
@@ -916,16 +917,32 @@ class DeterministicPlanner:
         return not policy.active_interval_blocked(start_minute, end_minute)
 
     @staticmethod
+    def _is_required_cargo(policy: PreferencePolicy, memory: DriverMemory, cargo_id: str) -> bool:
+        rc = policy.required_cargo
+        return rc is not None and not memory.has_taken_cargo(rc.cargo_id) and str(cargo_id) == str(rc.cargo_id)
+
+    @staticmethod
     def _latest_rest_start(policy: PreferencePolicy, now_minute: int) -> int:
         """Compute the latest time-of-day (minute within day) to start resting.
 
-        If quiet windows exist, rest must finish before the earliest window
-        start.  Otherwise fall back to midnight-based calculation.
+        Late overnight quiet windows can split a wait across midnight in the
+        scorer's per-day rest calculation, so start before those windows when
+        possible.  Early-morning/lunch quiet windows should not force a negative
+        or overly early cutoff.
         """
-        if policy.quiet_windows:
-            earliest_quiet_start = min(w.start_minute for w in policy.quiet_windows)
-            return earliest_quiet_start - policy.daily_rest_minutes
-        return DAY_MINUTES - policy.daily_rest_minutes
+        rest_minutes = int(policy.daily_rest_minutes or 0)
+        if rest_minutes <= 0:
+            return DAY_MINUTES
+        latest_start = max(0, DAY_MINUTES - rest_minutes)
+        late_overnight_starts: list[int] = []
+        for window in policy.quiet_windows:
+            if window.end_minute <= window.start_minute and window.start_minute >= 18 * 60:
+                candidate = window.start_minute - rest_minutes
+                if candidate >= 0:
+                    late_overnight_starts.append(candidate)
+        if late_overnight_starts:
+            latest_start = min(latest_start, min(late_overnight_starts))
+        return max(0, latest_start)
 
     @staticmethod
     def _wait(duration_minutes: int) -> dict[str, Any]:
