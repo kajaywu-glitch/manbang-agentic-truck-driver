@@ -53,7 +53,32 @@ class DriverMemory:
         return self.longest_rest_for_day(now_minute // DAY_MINUTES)
 
     def longest_rest_for_day(self, day: int) -> int:
-        return merged_longest_span(self.wait_intervals_by_day.get(day, []))
+        intervals = list(self.wait_intervals_by_day.get(day, []))
+        day_start_min = day * DAY_MINUTES
+        next_day_start = day_start_min + DAY_MINUTES
+
+        # Cross-midnight look-back: if yesterday's last interval ends exactly
+        # at midnight and today's first starts at midnight, they form one
+        # continuous rest.  Extend today's view with the merged span.
+        prev_intervals = self.wait_intervals_by_day.get(day - 1, [])
+        for s, e in prev_intervals:
+            if e == day_start_min:
+                for s2, e2 in intervals:
+                    if s2 == day_start_min:
+                        intervals.append((s, e2))
+                        break
+
+        # Cross-midnight look-forward: if today's last interval ends at
+        # midnight and tomorrow's first starts at midnight, the rest
+        # continues.  Give today credit for the full merged span.
+        for s, e in intervals:
+            if e == next_day_start:
+                for s2, e2 in self.wait_intervals_by_day.get(day + 1, []):
+                    if s2 == next_day_start:
+                        intervals.append((s, e2))
+                        break
+
+        return merged_longest_span(intervals)
 
     def completed_no_order_days(self, now_minute: int) -> int:
         current_day = now_minute // DAY_MINUTES
