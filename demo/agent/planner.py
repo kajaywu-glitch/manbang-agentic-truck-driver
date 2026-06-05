@@ -649,6 +649,14 @@ class DeterministicPlanner:
         if policy.daily_rest_minutes > 0:
             rest_remaining = needs_rest_today(policy, memory, now_minute)
             if rest_remaining > 0:
+                latest_rest_start = self._latest_rest_start(policy, now_minute)
+                # 硬性截止：已过最晚休息开始时间，不再接单（紧急货物除外）
+                if minute_of_day(now_minute) >= latest_rest_start:
+                    rc = policy.required_cargo
+                    is_required = (rc is not None and not memory.has_taken_cargo(rc.cargo_id)
+                                   and cargo_id == rc.cargo_id)
+                    if not is_required:
+                        return None
                 # 计算接单后到当天结束的可用时间（含回家时间）
                 travel_home_after = 0
                 if home is not None:
@@ -659,8 +667,6 @@ class DeterministicPlanner:
                 if remaining_today < policy.daily_rest_minutes + 30:
                     return None
                 # 如果接单完成时间太晚（在休息开始时间之后），拒绝
-                # 使用安静窗口开始时间（如果有）来计算最晚休息开始时间
-                latest_rest_start = self._latest_rest_start(policy, now_minute)
                 if minute_of_day(effective_finish) >= latest_rest_start:
                     return None
                 # 如果司机当前正在休息（最近一个动作是 wait 且已持续 >= 60 分钟），不打断
