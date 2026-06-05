@@ -152,9 +152,10 @@ class DeterministicPlanner:
         # 确定性选择
         chosen = max(candidates, key=lambda c: c.score)
 
-        # Qwen 约束验证：当模型可用、还有额度、冷却期已过时，验证确定性选择是否违反硬约束
-        verify_cooldown = self._step_counter - self._qwen_last_suggest_step >= 5
-        if self._qwen.enabled and self._qwen_review_count < self._qwen_max_reviews and verify_cooldown:
+        # Qwen3.5-Flash 约束验证 + 决策建议
+        suggest_cooldown = self._step_counter - self._qwen_last_suggest_step >= 5
+        if self._qwen.enabled and self._qwen_review_count < self._qwen_max_reviews and suggest_cooldown:
+            # Step 1: constraint verification for high-risk scenarios
             scenario = self._detect_risk_scenario(policy, memory, chosen, now_minute)
             if scenario is not None:
                 verify_ctx = self._build_verification_context(
@@ -174,11 +175,44 @@ class DeterministicPlanner:
                     )
                     if adjusted is not None:
                         chosen = adjusted
+                        self._logger.info("Qwen verification: adjusted to %s", chosen.reason)
                 else:
                     self._logger.debug(
                         "Qwen verification: safe driver=%s scenario=%s risk=%s",
                         driver_id, scenario, verification.get("risk") if verification else "n/a",
                     )
+
+            # Step 2: suggest_decision — let qwen3.5-flash choose among candidates
+            # when multiple options exist and the decision isn't obvious
+            if len(candidates) > 1 and self._qwen_review_count < self._qwen_max_reviews:
+                suggest_ctx = {
+                    "now_minute": now_minute,
+                    "rest_needed": needs_rest_today(policy, memory, now_minute),
+                    "has_home_night": policy.home_night is not None,
+                    "has_family": policy.family_task is not None,
+                }
+                cand_dicts = [
+                    {"action": c.action.get("action", ""), "params": c.action.get("params", {}),
+                     "reason": c.reason}
+                    for c in candidates
+                ]
+                model_idx = self._qwen.suggest_decision(driver_id, status, cand_dicts, suggest_ctx)
+                self._qwen_review_count += 1
+                self._qwen_last_suggest_step = self._step_counter
+                if model_idx is not None and 0 <= model_idx < len(candidates):
+                    model_choice = candidates[model_idx]
+                    if model_choice.score >= chosen.score * 0.5:
+                        self._logger.info(
+                            "Qwen suggest: model chose %s (score=%.1f) over %s (score=%.1f) for driver=%s",
+                            model_choice.reason, model_choice.score,
+                            chosen.reason, chosen.score, driver_id,
+                        )
+                        chosen = model_choice
+                    else:
+                        self._logger.info(
+                            "Qwen suggest: rejected (score too low %.1f vs %.1f)",
+                            model_choice.score, chosen.score,
+                        )
 
         self._logger.info(
             "decision driver=%s now=%s loc=(%.5f,%.5f) action=%s reason=%s score=%.2f items=%s",
@@ -460,9 +494,14 @@ class DeterministicPlanner:
             if best is None or plan.score > best.score:
                 best = plan
 
-        # Qwen3.5-Flash 货源评分融合 — 已禁用（reasoning token 成本过高，且不改变确定性选择）。
-        # 保留代码结构供后续参考。只在 suggest_decision 中使用 Qwen。
-        should_rank = False
+        # qwen3.5-flash 约束感知货源评分：每 10 步最多调用 1 次，全局上限内
+        rank_cooldown = self._step_counter - self._qwen_last_rank_step >= 10
+        should_rank = (
+            self._qwen.enabled
+            and self._qwen_review_count < self._qwen_max_reviews
+            and rank_cooldown
+            and len(evaluated_plans) >= 2
+        )
         if should_rank:
             constraints = {
                 "forbidden_cargo": list(policy.forbidden_cargo_names),

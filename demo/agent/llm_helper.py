@@ -17,7 +17,7 @@ from typing import Any
 
 from simkit.ports import SimulationApiPort
 
-_DEFAULT_MODEL = "qwen-plus"
+_DEFAULT_MODEL = "qwen3.5-flash"
 QWEN_MODEL = os.environ.get("AGENT_QWEN_MODEL", "").strip() or _DEFAULT_MODEL
 ENABLE_ENV = "AGENT_ENABLE_QWEN35_FLASH"
 
@@ -86,7 +86,7 @@ class QwenFlashHelper:
             return {}
 
     # ------------------------------------------------------------------
-    # 货源排序：模型对候选货源打分
+    # 货源排序：qwen3.5-flash 推理模型约束感知评分
     # ------------------------------------------------------------------
     def rank_cargos(
         self,
@@ -95,17 +95,15 @@ class QwenFlashHelper:
         cargos: list[dict[str, Any]],
         constraints: dict[str, Any],
     ) -> dict[str, float]:
-        """Ask the model to score each cargo. Returns {cargo_id: score}.
+        """Ask qwen3.5-flash to score cargos with constraint awareness.
 
-        Scores should be 0-100 where higher is better. Returns empty dict
-        on failure (caller falls back to deterministic scoring).
+        Uses reasoning capability to weigh profit against constraint risk.
+        Only top-3 cargos to limit token cost. Returns {cargo_id: score_0_to_100}.
         """
         if not self.enabled or not cargos:
             return {}
 
-        # 限制候选数量，避免 prompt 过长和模型长时间推理。
-        top_cargos = cargos[:5]
-
+        top_cargos = cargos[:3]
         cargo_summaries = []
         for c in top_cargos:
             cargo = c.get("cargo", {})
@@ -115,22 +113,22 @@ class QwenFlashHelper:
                 "cargo_id": str(cargo.get("cargo_id", "")),
                 "name": str(cargo.get("cargo_name", "")),
                 "category": str(cargo.get("cargo_category", "")),
-                "price": float(cargo.get("price", 0) or 0),
-                "pickup_lat": float(start.get("lat", 0) or 0),
-                "pickup_lng": float(start.get("lng", 0) or 0),
-                "dest_lat": float(end.get("lat", 0) or 0),
-                "dest_lng": float(end.get("lng", 0) or 0),
-                "distance_km": float(c.get("distance_km", 0) or 0),
+                "price_yuan": float(cargo.get("price", 0) or 0),
+                "pickup_km": float(c.get("distance_km", 0) or 0),
                 "haul_km": float(c.get("haul_distance_km", 0) or 0),
                 "cost_time_minutes": int(cargo.get("cost_time_minutes", 0) or 0),
+                "dest_city": str(end.get("city", "")),
             })
 
         prompt_data = {
-            "task": "对以下候选货源按盈利潜力打分(0-100)。考虑：运价、距离成本、时间效率、目的地机会。",
+            "task": (
+                "根据司机的约束条件，对候选货源进行综合评分（0-100）。"
+                "评分标准：高利润优先，但必须优先排除违反约束的货源。"
+            ),
             "driver": {
                 "id": driver_id,
-                "lat": float(driver_status.get("current_lat", 0)),
-                "lng": float(driver_status.get("current_lng", 0)),
+                "current_lat": float(driver_status.get("current_lat", 0)),
+                "current_lng": float(driver_status.get("current_lng", 0)),
                 "cost_per_km": 1.5,
             },
             "constraints": constraints,
@@ -141,13 +139,14 @@ class QwenFlashHelper:
         payload = {
             "model": QWEN_MODEL,
             "temperature": 0,
-            "max_tokens": 192,
+            "max_tokens": 256,
             "messages": [
                 {
                     "role": "system",
                     "content": (
-                        "你是货运调度AI。对每个候选货源给出0-100的盈利潜力评分。"
-                        "只输出JSON: {\"cargo_scores\": {\"id\": score, ...}}"
+                        "你是货运调度AI。根据司机的约束条件（距离限制、禁运品类、休息需求、"
+                        "回家时间等），对候选货源评分。违反硬约束的给0分。"
+                        "只输出JSON: {\"cargo_scores\": {\"cargo_id\": score, ...}}"
                     ),
                 },
                 {"role": "user", "content": json.dumps(prompt_data, ensure_ascii=False)},
@@ -170,14 +169,14 @@ class QwenFlashHelper:
                     result[str(k)] = max(0.0, min(100.0, float(v)))
                 except (TypeError, ValueError):
                     continue
-            self._logger.info("model ranked %d cargos for driver=%s", len(result), driver_id)
+            self._logger.info("qwen3.5-flash ranked %d cargos for driver=%s", len(result), driver_id)
             return result
         except Exception as exc:
             self._logger.warning("rank_cargos unavailable: %s", exc)
             return {}
 
     # ------------------------------------------------------------------
-    # 决策建议：模型选择最佳动作
+    # 决策建议：qwen3.5-flash 约束感知动作选择
     # ------------------------------------------------------------------
     def suggest_decision(
         self,
@@ -186,31 +185,38 @@ class QwenFlashHelper:
         candidates: list[dict[str, Any]],
         context: dict[str, Any],
     ) -> int | None:
-        """Ask the model to pick the best candidate. Returns index or None.
+        """Ask qwen3.5-flash to pick the best action with constraint awareness.
 
-        candidates is a list of {action, params, reason, score}.
-        Returns the index into candidates, or None on failure.
+        CRITICAL: does NOT expose deterministic_score to the model.
+        Instead provides constraint context so the model reasons independently.
         """
         if not self.enabled or not candidates:
             return None
 
         cand_summaries = []
         for i, c in enumerate(candidates):
-            cand_summaries.append({
+            params = c.get("params", {})
+            summary = {
                 "index": i,
                 "action": c.get("action", ""),
-                "params": c.get("params", {}),
                 "reason": c.get("reason", ""),
-                "deterministic_score": c.get("score", 0),
-            })
+            }
+            # Expose actionable params but NOT the deterministic score
+            if c.get("action") == "take_order":
+                summary["cargo_id"] = str(params.get("cargo_id", ""))
+                summary["estimated_net"] = params.get("estimated_net", "?")
+            elif c.get("action") == "wait":
+                summary["duration_minutes"] = params.get("duration_minutes", 60)
+            elif c.get("action") == "reposition":
+                summary["target"] = f"{params.get('latitude',0):.2f},{params.get('longitude',0):.2f}"
+            cand_summaries.append(summary)
 
         prompt_data = {
-            "task": "选择最佳动作。考虑收益、偏好约束、时间效率。",
-            "driver": {
-                "id": driver_id,
-                "lat": float(driver_status.get("current_lat", 0)),
-                "lng": float(driver_status.get("current_lng", 0)),
-            },
+            "task": (
+                "根据司机的约束条件，综合评估利润和风险，选择最佳动作。"
+                "优先考虑：完成约束（休息、回家）、避免罚分，其次才是利润最大化。"
+            ),
+            "driver": {"id": driver_id},
             "context": context,
             "candidates": cand_summaries,
             "output_format": {"chosen_index": "int"},
@@ -219,13 +225,14 @@ class QwenFlashHelper:
         payload = {
             "model": QWEN_MODEL,
             "temperature": 0,
-            "max_tokens": 96,
+            "max_tokens": 192,
             "messages": [
                 {
                     "role": "system",
                     "content": (
-                        "你是货运调度AI。从候选动作中选最优的一个。"
-                        "只输出JSON: {\"chosen_index\": N}"
+                        "你是货运调度AI。根据司机的约束条件（休息需求、回家时间、"
+                        "禁运品类等），从候选动作中选择最优方案。如果有冲突，"
+                        "优先选择避免罚分的方案。只输出JSON: {\"chosen_index\": N}"
                     ),
                 },
                 {"role": "user", "content": json.dumps(prompt_data, ensure_ascii=False)},
@@ -244,7 +251,7 @@ class QwenFlashHelper:
                 return None
             idx = int(idx)
             if 0 <= idx < len(candidates):
-                self._logger.info("model chose candidate %d for driver=%s", idx, driver_id)
+                self._logger.info("qwen3.5-flash chose candidate %d for driver=%s", idx, driver_id)
                 return idx
             return None
         except Exception as exc:
