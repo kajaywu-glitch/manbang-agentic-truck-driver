@@ -2,7 +2,7 @@
 
 最后更新：2026-05-29 19:42 +08:00
 
-本次更新：同步 `mimo/risk-gated-mpc` 审查修正与合并状态，说明已加入 Risk-Gated MPC、仿真进度 heartbeat、Qwen 输出限长和调用收紧；下一轮重点是完整 31 天确定性基线、真实 Qwen 小上限短测、以及“当前跑到第几天/完成几个司机/阶段结果”的评测进度显示。
+本次更新：同步 `deepseek/risk-gated-mpc` 审查修正与合并状态，说明已加入 Risk-Gated MPC、仿真进度 heartbeat、Qwen 输出限长和调用收紧；下一轮重点是完整 31 天确定性基线、真实 Qwen 小上限短测、以及“当前跑到第几天/完成几个司机/阶段结果”的评测进度显示。
 
 本仓库用于「基于 Agentic AI 的卡车司机连续找货决策」赛题的本地开发、设计沉淀与后续审阅。
 
@@ -24,6 +24,6 @@ Agent 决策代码必须通过 `SimulationApiPort` 获取状态、货源与历�
 
 ## 当前状态（截至 2026-05-29 19:42 +08:00）
 
-截至 2026-05-29 19:42 +08:00，当前稳定主线为 `main`，本次合并包含 `mimo/risk-gated-mpc`：D010 家事逻辑仍保持运行时 `preferences` 解析；新增 Risk-Gated MPC、`AGENT_PROGRESS_STDERR` heartbeat、Qwen 候选触发收紧，并经 Codex 审查补充了 `max_tokens` 限制、rank 候选数 5、默认 `AGENT_QWEN_MAX_REVIEWS=20` 和家事 deadline 修正。已通过 `compileall` 和关闭 Qwen 的 `--max-steps 50`。
+截至 2026-05-29 19:42 +08:00，当前稳定主线为 `main`，本次合并包含 `deepseek/risk-gated-mpc`：D010 家事逻辑仍保持运行时 `preferences` 解析；新增 Risk-Gated MPC、`AGENT_PROGRESS_STDERR` heartbeat、Qwen 候选触发收紧，并经 Codex 审查补充了 `max_tokens` 限制、rank 候选数 5、默认 `AGENT_QWEN_MAX_REVIEWS=20` 和家事 deadline 修正。已通过 `compileall` 和关闭 Qwen 的 `--max-steps 50`。
 
-Agent 已实现确定性滚动规划，并已接入 `qwen3.5-flash` 的偏好增强、货源评分与候选复审接口；默认不开模型，开启需设置 `AGENT_ENABLE_QWEN35_FLASH=1`。下一步优先重跑合并后的 31 天确定性基线，然后用真实 key 做小上限 Qwen 短测，确认 token 和耗时可控。下一位模型请优先阅读 `WORKFLOW_MIMO_CODEX.md`、`CLAUDE.md` 和 `demo/agent/README.md`。
+Agent 已实现确定性滚动规划，并已接入 `qwen3.5-flash` 的偏好增强、货源评分与候选复审接口；默认不开模型，开启需设置 `AGENT_ENABLE_QWEN35_FLASH=1`。下一步优先重跑合并后的 31 天确定性基线，然后用真实 key 做小上限 Qwen 短测，确认 token 和耗时可控。下一位模型请优先阅读 `WORKFLOW_DEEPSEEK_CODEX.md`、`CLAUDE.md` 和 `demo/agent/README.md`。

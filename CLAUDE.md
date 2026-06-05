@@ -9,16 +9,16 @@
 ## 当前结论（截至 2026-06-06 00:00 +08:00）
 
 - 仓库：`D:\竞赛`
-- 当前工作分支：`mimo/third-round-optimization`
+- 当前工作分支：`deepseek/third-round-optimization`
 - 当前稳定分支：`main`（含 Codex 合并结果）
 - 最新确定性 31 天结果：总净收入 `152,769.28`，总偏好罚分 `12,070`，`failed_driver_count = 0`，`total_token_usage = 0`。
 - **Qwen 集成测试结论**：`qwen3.5-flash` 已集成但不适合当前场景。完整 31 天 Qwen 模式（max_reviews=10）净收入 142,895（比确定性低 9,874），D009 从 10,526 暴跌至 423。原因：模型在 suggest_decision 中看到 deterministic_score 后直接选最高分（无价值）；移除分数后模型乱选（有害）。`rank_cargos` 已禁用（每次 ~5000 reasoning token，不改变决策）。
-- 本轮 `mimo/third-round-optimization` 完成了：6h 休息触发窗口、安静窗口感知休息截止、home-night 跨日 deadline 修正、Qwen 全面测试与结论记录。
+- 本轮 `deepseek/third-round-optimization` 完成了：6h 休息触发窗口、安静窗口感知休息截止、home-night 跨日 deadline 修正、Qwen 全面测试与结论记录。
 
-## 本轮改动与审查修正（mimo/risk-gated-mpc，2026-05-29 19:42 +08:00）
+## 本轮改动与审查修正（deepseek/risk-gated-mpc，2026-05-29 19:42 +08:00）
 
-分支：`mimo/risk-gated-mpc`
-Mimo 最新 commit：`0476fb1 feat: implement Risk-Gated MPC, progress display, Qwen trigger tightening`
+分支：`deepseek/risk-gated-mpc`
+Deepseek 最新 commit：`0476fb1 feat: implement Risk-Gated MPC, progress display, Qwen trigger tightening`
 Codex 审查修正：见 `0476fb1` 之后的最新提交。
 
 本轮目标：
@@ -118,7 +118,7 @@ $env:TIANCHI_MODEL_API_KEY = $env:DASHSCOPE_API_KEY
 $env:AGENT_ENABLE_QWEN35_FLASH = "1"
 ```
 
-推荐本地做法：把真实 key 填到仓库根目录的 `D:\竞赛\.env.local`，该文件已被 `.gitignore` 忽略，不要提交。Mimo/CC 在运行仿真前，在同一个 PowerShell 终端执行：
+推荐本地做法：把真实 key 填到仓库根目录的 `D:\竞赛\.env.local`，该文件已被 `.gitignore` 忽略，不要提交。deepseek/CC 在运行仿真前，在同一个 PowerShell 终端执行：
 
 ```powershell
 cd D:\竞赛
@@ -155,7 +155,7 @@ set AGENT_ENABLE_QWEN35_FLASH=1
 
 ## 合并后审阅结论（2026-05-29）
 
-这些是 `mimo/fix-d010-family-task` 合并到 `main` 后的结论，给下一位模型优先处理。
+这些是 `deepseek/fix-d010-family-task` 合并到 `main` 后的结论，给下一位模型优先处理。
 
 ### ~~阻塞问题~~（2026-05-29 已解决）
 
@@ -339,7 +339,7 @@ C:\Users\20689\miniconda3\Scripts\conda.exe run -n mus-tread python -m compileal
 
 ## 本轮改动与合并状态（2026-05-29）
 
-**分支**：`mimo/fix-d010-family-task`
+**分支**：`deepseek/fix-d010-family-task`
 
 **已修改文件**：`demo/agent/planner.py`（删除 14 行 D010 hardcode）
 
