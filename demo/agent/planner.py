@@ -272,8 +272,12 @@ class DeterministicPlanner:
         rest_remaining = needs_rest_today(policy, memory, now_minute)
         if rest_remaining > 0:
             rest_minutes = int(policy.daily_rest_minutes or 0)
-            # Pre-trigger = max(4h, rest_minutes) — proportional to rest need
-            pre_trigger = max(240, rest_minutes)
+            # Pre-trigger = max(4h, rest_minutes). For weekday-only rest,
+            # add 1h extra lead time since weekend days can't compensate.
+            base_trigger = max(240, rest_minutes)
+            if policy.daily_rest_weekdays_only:
+                base_trigger = max(300, rest_minutes)
+            pre_trigger = base_trigger
 
             # Early-morning rest continuation: if the last action was a
             # substantial wait extending to or past midnight, keep resting
@@ -924,7 +928,7 @@ class DeterministicPlanner:
         return max(0, latest_start)
 
     # ------------------------------------------------------------------
-    # Qwen constraint verification helpers
+    # Qwen constraint detection (post-decision)
     # ------------------------------------------------------------------
     @staticmethod
     def _detect_risk_scenario(
