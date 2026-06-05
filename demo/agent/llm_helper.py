@@ -1,8 +1,11 @@
-"""Qwen3.5-Flash integration for cargo ranking and strategic decisions.
+"""Qwen model integration for constraint verification and strategic decisions.
 
 The deterministic planner works without a model. When AGENT_ENABLE_QWEN35_FLASH
-is set, the model assists in cargo ranking and action selection, falling back
-to deterministic logic on any failure.
+is set, Qwen assists in preference parsing and constraint verification,
+falling back to deterministic logic on any failure.
+
+Model selection: defaults to 'qwen-plus' (non-reasoning, good quality/cost).
+Override with AGENT_QWEN_MODEL env var (e.g. 'qwen-turbo', 'qwen3.5-flash').
 """
 
 from __future__ import annotations
@@ -14,7 +17,8 @@ from typing import Any
 
 from simkit.ports import SimulationApiPort
 
-QWEN_FLASH_MODEL = "qwen3.5-flash"
+_DEFAULT_MODEL = "qwen-plus"
+QWEN_MODEL = os.environ.get("AGENT_QWEN_MODEL", "").strip() or _DEFAULT_MODEL
 ENABLE_ENV = "AGENT_ENABLE_QWEN35_FLASH"
 
 
@@ -54,7 +58,7 @@ class QwenFlashHelper:
             "preferences": preferences,
         }
         payload = {
-            "model": QWEN_FLASH_MODEL,
+            "model": QWEN_MODEL,
             "temperature": 0,
             "max_tokens": 192,
             "messages": [
@@ -135,7 +139,7 @@ class QwenFlashHelper:
         }
 
         payload = {
-            "model": QWEN_FLASH_MODEL,
+            "model": QWEN_MODEL,
             "temperature": 0,
             "max_tokens": 192,
             "messages": [
@@ -213,7 +217,7 @@ class QwenFlashHelper:
         }
 
         payload = {
-            "model": QWEN_FLASH_MODEL,
+            "model": QWEN_MODEL,
             "temperature": 0,
             "max_tokens": 96,
             "messages": [
