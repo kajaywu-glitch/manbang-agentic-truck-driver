@@ -283,13 +283,13 @@ class DeterministicPlanner:
                 if dist > visit.radius_km and dist <= 120 and self._active_allowed(policy, now_minute, now_minute + distance_to_minutes(dist)):
                     return {"action": "reposition", "params": {"latitude": visit.lat, "longitude": visit.lng}}
 
-        # 连续休息前移：提前 4 小时检查，避免 query_cargo 切碎休息窗口
+        # 连续休息前移：提前 6 小时检查，避免 query_cargo 切碎休息窗口
         rest_remaining = needs_rest_today(policy, memory, now_minute)
         if rest_remaining > 0:
-            latest_start = DAY_MINUTES - policy.daily_rest_minutes
+            latest_start = self._latest_rest_start(policy, now_minute)
             mod = minute_of_day(now_minute)
-            # 提前 4 小时开始休息，使用完整休息时长确保连续性
-            if mod >= latest_start - 240:
+            # 提前 6 小时开始休息，使用完整休息时长确保连续性
+            if mod >= latest_start - 360:
                 duration = max(60, min(policy.daily_rest_minutes, day_end(now_minute) - now_minute))
                 return self._wait(duration)
             # 如果当前正在休息中（最近动作是 wait >= 60 分钟），不打断
@@ -612,17 +612,24 @@ class DeterministicPlanner:
             # 如果已过23:00，不接新单
             if now_minute >= today_deadline:
                 return None
+            # 跨日修正：如果完单在明天，用明天的 deadline
+            effective_deadline = today_deadline
+            if finish > today_deadline:
+                tomorrow_base = today_base + DAY_MINUTES
+                effective_deadline = tomorrow_base + home.deadline_minute_of_day
+                if finish > effective_deadline:
+                    return None
             # 从卸货点回家的时间
             dist_end_to_home = haversine_km(end_lat, end_lng, home.lat, home.lng)
             travel_end_to_home = distance_to_minutes(dist_end_to_home)
             arrive_home = finish + travel_end_to_home
-            # 必须能在今天23:00前到家（含 60 分钟缓冲）
-            if arrive_home > today_deadline - 60:
+            # 必须能在 deadline 前到家（含 60 分钟缓冲）
+            if arrive_home > effective_deadline - 60:
                 return None
             # 时间紧张度检查：当前距 deadline 不够回家 + 缓冲
             dist_to_home_now = haversine_km(current_lat, current_lng, home.lat, home.lng)
             travel_home_now = distance_to_minutes(dist_to_home_now)
-            time_to_deadline = today_deadline - now_minute
+            time_to_deadline = today_deadline - now_minute  # today's deadline for time-of-day checks
             if time_to_deadline < travel_home_now + 120:
                 return None
             # 16:00 后：卸货点必须距家 60km 以内，且 finish 不晚于 deadline 前 2 小时
@@ -652,7 +659,8 @@ class DeterministicPlanner:
                 if remaining_today < policy.daily_rest_minutes + 30:
                     return None
                 # 如果接单完成时间太晚（在休息开始时间之后），拒绝
-                latest_rest_start = DAY_MINUTES - policy.daily_rest_minutes
+                # 使用安静窗口开始时间（如果有）来计算最晚休息开始时间
+                latest_rest_start = self._latest_rest_start(policy, now_minute)
                 if minute_of_day(effective_finish) >= latest_rest_start:
                     return None
                 # 如果司机当前正在休息（最近一个动作是 wait 且已持续 >= 60 分钟），不打断
@@ -816,10 +824,10 @@ class DeterministicPlanner:
         now_minute = int(status.get("simulation_progress_minutes", 0) or 0)
         rest_remaining = needs_rest_today(policy, memory, now_minute)
         if rest_remaining > 0:
-            # 休息紧迫度：剩余时间越少，分数越高
-            latest_start = DAY_MINUTES - policy.daily_rest_minutes
+            # 休息紧迫度：使用安静窗口开始时间（如果有）来计算最晚休息开始
+            latest_start = self._latest_rest_start(policy, now_minute)
             urgency = max(0, minute_of_day(now_minute) - latest_start + 60)
-            rest_score = 500.0 + rest_remaining * 0.5 + urgency * 0.3
+            rest_score = 600.0 + rest_remaining * 0.5 + urgency * 0.4
             # 更积极地触发休息：提前4小时，或没有好订单时提前3小时
             has_good_cargo = best_cargo is not None and best_cargo.score > 100
             if minute_of_day(now_minute) >= latest_start - 240 or (not has_good_cargo and rest_remaining > 60):
@@ -900,6 +908,18 @@ class DeterministicPlanner:
         if end_minute <= start_minute:
             return True
         return not policy.active_interval_blocked(start_minute, end_minute)
+
+    @staticmethod
+    def _latest_rest_start(policy: PreferencePolicy, now_minute: int) -> int:
+        """Compute the latest time-of-day (minute within day) to start resting.
+
+        If quiet windows exist, rest must finish before the earliest window
+        start.  Otherwise fall back to midnight-based calculation.
+        """
+        if policy.quiet_windows:
+            earliest_quiet_start = min(w.start_minute for w in policy.quiet_windows)
+            return earliest_quiet_start - policy.daily_rest_minutes
+        return DAY_MINUTES - policy.daily_rest_minutes
 
     @staticmethod
     def _wait(duration_minutes: int) -> dict[str, Any]:
