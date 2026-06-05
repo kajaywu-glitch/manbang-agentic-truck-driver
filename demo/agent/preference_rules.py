@@ -147,11 +147,14 @@ def apply_qwen_hints(policy: PreferencePolicy, hints: dict[str, Any]) -> Prefere
             if isinstance(name, str) and name:
                 policy.forbidden_cargo_names.add(name)
 
-    extra_soft = hints.get("soft_avoid_cargo_names")
-    if isinstance(extra_soft, list):
-        for name in extra_soft:
-            if isinstance(name, str) and name:
-                policy.soft_avoid_cargo_names.add(name)
+    # soft_avoid 收紧已禁用：Qwen 可能将"尽量不拉"升级为硬禁运，
+    # 导致失去盈利货源机会（D010 服饰纺织皮革为高利润品类）。
+    # 如需重新启用，取消下面注释。
+    # extra_soft = hints.get("soft_avoid_cargo_names")
+    # if isinstance(extra_soft, list):
+    #     for name in extra_soft:
+    #         if isinstance(name, str) and name:
+    #             policy.soft_avoid_cargo_names.add(name)
 
     # 距离限制收紧已禁用：Qwen 对 max_haul_km / max_pickup_km 的收紧过于激进，
     # 会显著减少接单机会从而降低净收入（尤其是 D010）。保留禁运品类和休息时间的收紧。
@@ -165,12 +168,14 @@ def apply_qwen_hints(policy: PreferencePolicy, hints: dict[str, Any]) -> Prefere
     #     if policy.max_pickup_km is None or hint_pickup < policy.max_pickup_km:
     #         policy.max_pickup_km = float(hint_pickup)
 
-    # 休息时间：只能增加
-    hint_rest = hints.get("daily_rest_hours")
-    if isinstance(hint_rest, (int, float)) and hint_rest > 0:
-        rest_min = int(hint_rest * 60)
-        if rest_min > policy.daily_rest_minutes:
-            policy.daily_rest_minutes = rest_min
+    # 休息时间收紧已禁用：增加休息需求会减少接单时间，净收入损失
+    # 通常超过罚分节省（例如 +1h rest ≈ -1,200 net vs -300 penalty saving）。
+    # 保留禁运品类收紧（纯罚分改善，不影响接单时间）。
+    # hint_rest = hints.get("daily_rest_hours")
+    # if isinstance(hint_rest, (int, float)) and hint_rest > 0:
+    #     rest_min = int(hint_rest * 60)
+    #     if rest_min > policy.daily_rest_minutes:
+    #         policy.daily_rest_minutes = rest_min
 
     return policy
 
