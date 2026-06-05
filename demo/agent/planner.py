@@ -323,13 +323,11 @@ class DeterministicPlanner:
 
         # home_deadline 紧迫性检查：接到人后如果 deadline 紧张，立即回家。
         # 未接配偶时仍必须先接人，否则会触发更高的固定罚分。
-        # 缓冲时间需至少满足当日连续休息需求，避免到家当天休息不足。
         if pickup_done and not at_home and family.home_deadline_minute > 0:
             dist_home = haversine_km(lat, lng, family.home_lat, family.home_lng)
             travel_home = distance_to_minutes(dist_home)
             time_to_deadline = family.home_deadline_minute - now_minute
-            rest_buffer = max(60, int(policy.daily_rest_minutes or 0))
-            if time_to_deadline <= travel_home + rest_buffer:
+            if time_to_deadline <= travel_home + 60:
                 return {"action": "reposition", "params": {"latitude": family.home_lat, "longitude": family.home_lng}}
 
         # 永远先接配偶（跳过会导致 9000 固定罚分，远比迟到罚分严重）
