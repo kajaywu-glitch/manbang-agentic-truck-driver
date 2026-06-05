@@ -21,7 +21,7 @@ from agent.geo import (
     minute_of_day,
     wall_time_to_minutes,
 )
-from agent.llm_helper import QWEN_FLASH_MODEL, QwenFlashHelper
+from agent.llm_helper import QWEN_MODEL, QwenFlashHelper
 from agent.preference_rules import (
     FamilyTask,
     HomeNightRule,
@@ -93,7 +93,7 @@ class DeterministicPlanner:
             qwen_hints = self._qwen.preference_hints(list(status.get("preferences") or []))
             if qwen_hints:
                 policy = apply_qwen_hints(policy, qwen_hints)
-                self._logger.info("applied %s preference hints driver=%s keys=%s", QWEN_FLASH_MODEL, driver_id, sorted(qwen_hints.keys()))
+                self._logger.info("applied %s preference hints driver=%s keys=%s", QWEN_MODEL, driver_id, sorted(qwen_hints.keys()))
 
         urgent = self._urgent_action(status, memory, policy)
         if urgent is not None:
@@ -152,49 +152,33 @@ class DeterministicPlanner:
         # 确定性选择
         chosen = max(candidates, key=lambda c: c.score)
 
-        # Qwen3.5-Flash 候选复审：当模型可用、还有复审额度、冷却期已过、且候选分数接近时
-        suggest_cooldown = self._step_counter - self._qwen_last_suggest_step >= 5
-        if self._qwen.enabled and self._qwen_review_count < self._qwen_max_reviews and len(candidates) > 1 and suggest_cooldown:
-            scores = sorted([c.score for c in candidates], reverse=True)
-            score_gap = scores[0] - scores[1] if len(scores) > 1 else 999
-            has_high_risk = any(
-                kw in (chosen.reason or "")
-                for kw in ("required_cargo", "home_night", "family", "rest", "required_visit")
-            )
-            # 候选分数接近（<20%差距）且存在高风险偏好时，请求模型复审
-            if score_gap < max(20, abs(scores[0]) * 0.2) and has_high_risk:
-                context = {
-                    "now_minute": now_minute,
-                    "day": now_minute // DAY_MINUTES,
-                    "rest_needed": needs_rest_today(policy, memory, now_minute),
-                    "deadhead_km": memory.deadhead_km,
-                    "high_risk": has_high_risk,
-                }
-                cand_dicts = [
-                    {"action": c.action.get("action", ""), "params": c.action.get("params", {}),
-                     "reason": c.reason, "score": c.score}
-                    for c in candidates
-                ]
-                model_idx = self._qwen.suggest_decision(driver_id, status, cand_dicts, context)
+        # Qwen 约束验证：当模型可用、还有额度、冷却期已过时，验证确定性选择是否违反硬约束
+        verify_cooldown = self._step_counter - self._qwen_last_suggest_step >= 5
+        if self._qwen.enabled and self._qwen_review_count < self._qwen_max_reviews and verify_cooldown:
+            scenario = self._detect_risk_scenario(policy, memory, chosen, now_minute)
+            if scenario is not None:
+                verify_ctx = self._build_verification_context(
+                    scenario, status, memory, policy, chosen, now_minute, lat, lng,
+                )
+                verification = self._qwen.verify_constraints(driver_id, scenario, verify_ctx)
                 self._qwen_review_count += 1
                 self._qwen_last_suggest_step = self._step_counter
-                if model_idx is not None and 0 <= model_idx < len(candidates):
-                    model_choice = candidates[model_idx]
-                    # 安全检查：模型选择的候选分数不能太低（低于确定性选择的50%）
-                    if model_choice.score >= chosen.score * 0.5:
-                        self._logger.info(
-                            "Qwen review: model chose %s (score=%.1f) over %s (score=%.1f) for driver=%s",
-                            model_choice.reason, model_choice.score,
-                            chosen.reason, chosen.score, driver_id,
-                        )
-                        chosen = model_choice
-                    else:
-                        self._logger.info(
-                            "Qwen review: model choice rejected (score too low %.1f vs %.1f) for driver=%s",
-                            model_choice.score, chosen.score, driver_id,
-                        )
+                if verification is not None and not verification.get("safe", True):
+                    self._logger.warning(
+                        "Qwen verification: UNSAFE driver=%s scenario=%s risk=%s concern=%s",
+                        driver_id, scenario, verification.get("risk"),
+                        verification.get("concern"),
+                    )
+                    adjusted = self._apply_verification_feedback(
+                        verification, candidates, chosen, scenario, policy, memory, now_minute,
+                    )
+                    if adjusted is not None:
+                        chosen = adjusted
                 else:
-                    self._logger.debug("Qwen review: no valid choice for driver=%s, using deterministic", driver_id)
+                    self._logger.debug(
+                        "Qwen verification: safe driver=%s scenario=%s risk=%s",
+                        driver_id, scenario, verification.get("risk") if verification else "n/a",
+                    )
 
         self._logger.info(
             "decision driver=%s now=%s loc=(%.5f,%.5f) action=%s reason=%s score=%.2f items=%s",
@@ -935,6 +919,150 @@ class DeterministicPlanner:
         if late_overnight_starts:
             latest_start = min(latest_start, min(late_overnight_starts))
         return max(0, latest_start)
+
+    # ------------------------------------------------------------------
+    # Qwen constraint verification helpers
+    # ------------------------------------------------------------------
+    @staticmethod
+    def _detect_risk_scenario(
+        policy: PreferencePolicy,
+        memory: DriverMemory,
+        chosen: Candidate,
+        now_minute: int,
+    ) -> str | None:
+        """Return the risk scenario name if the decision involves a constraint."""
+        reason = chosen.reason or ""
+        mod = minute_of_day(now_minute)
+
+        # Home-night: only trigger in afternoon/evening when time pressure exists
+        if policy.home_night is not None and mod >= 15 * 60:
+            if "home_night" in reason or chosen.action.get("action") == "take_order":
+                return "home_night"
+
+        # Rest: trigger when rest is still needed today
+        rest_needed = needs_rest_today(policy, memory, now_minute)
+        if rest_needed > 0 and policy.daily_rest_minutes > 0:
+            return "rest"
+
+        # Family: trigger within 48h of family task
+        if policy.family_task is not None and now_minute >= policy.family_task.start_minute - 48 * 60:
+            return "family"
+
+        return None
+
+    def _build_verification_context(
+        self,
+        scenario: str,
+        status: dict[str, Any],
+        memory: DriverMemory,
+        policy: PreferencePolicy,
+        chosen: Candidate,
+        now_minute: int,
+        lat: float,
+        lng: float,
+    ) -> dict[str, Any]:
+        """Build scenario-specific context dict for Qwen verification."""
+        from agent.preference_rules import minutes_to_wall_time  # noqa: F811 - local import
+
+        ctx: dict[str, Any] = {
+            "wall_time": minutes_to_wall_time(now_minute),
+            "lat": lat,
+            "lng": lng,
+            "action_type": chosen.action.get("action", "?"),
+            "action_duration": 0,
+            "finish_time": "?",
+            "end_lat": lat,
+            "end_lng": lng,
+        }
+
+        # Estimate action duration
+        if chosen.action.get("action") == "take_order":
+            ctx["action_duration"] = chosen.action.get("params", {}).get("estimated_minutes", 60)
+            ctx["finish_time"] = minutes_to_wall_time(now_minute + ctx["action_duration"])
+            # Try to get end position from cargo evaluation
+            cargo_end = chosen.action.get("params", {}).get("_end_lat")
+            if cargo_end is not None:
+                ctx["end_lat"] = float(chosen.action["params"].get("_end_lat", lat))
+                ctx["end_lng"] = float(chosen.action["params"].get("_end_lng", lng))
+        elif chosen.action.get("action") == "wait":
+            ctx["action_duration"] = chosen.action.get("params", {}).get("duration_minutes", 60)
+            ctx["finish_time"] = minutes_to_wall_time(now_minute + ctx["action_duration"])
+        elif chosen.action.get("action") == "reposition":
+            ctx["action_duration"] = 30
+            ctx["finish_time"] = minutes_to_wall_time(now_minute + 30)
+            rp = chosen.action.get("params", {})
+            ctx["end_lat"] = float(rp.get("latitude", lat))
+            ctx["end_lng"] = float(rp.get("longitude", lng))
+
+        if scenario == "home_night" and policy.home_night is not None:
+            hn = policy.home_night
+            ctx["home_lat"] = hn.home_lat
+            ctx["home_lng"] = hn.home_lng
+            ctx["dist_home_km"] = haversine_km(lat, lng, hn.home_lat, hn.home_lng)
+            ctx["travel_home_min"] = distance_to_minutes(ctx["dist_home_km"])
+            ctx["end_to_home_km"] = haversine_km(ctx["end_lat"], ctx["end_lng"], hn.home_lat, hn.home_lng)
+            ctx["end_to_home_min"] = distance_to_minutes(ctx["end_to_home_km"])
+            deadline = day_end(now_minute) if minute_of_day(now_minute) < 23 * 60 else day_end(now_minute) + DAY_MINUTES
+            ctx["time_to_deadline"] = deadline - now_minute
+
+        elif scenario == "rest":
+            rest_hours = int(policy.daily_rest_minutes or 0) / 60.0
+            ctx["rest_hours"] = rest_hours
+            ctx["rested_today"] = memory.longest_rest_today(now_minute)
+            ctx["rest_remaining"] = max(0, int(policy.daily_rest_minutes or 0) - ctx["rested_today"])
+            ctx["minutes_left_today"] = day_end(now_minute) - now_minute
+            ctx["after_finish"] = day_end(now_minute) - (now_minute + ctx["action_duration"])
+
+        elif scenario == "family" and policy.family_task is not None:
+            ft = policy.family_task
+            ctx["family_start"] = minutes_to_wall_time(ft.start_minute)
+            ctx["family_deadline"] = minutes_to_wall_time(ft.home_deadline_minute) if ft.home_deadline_minute > 0 else "?"
+            ctx["stay_until"] = minutes_to_wall_time(ft.stay_until_minute)
+            ctx["end_to_pickup_km"] = haversine_km(ctx["end_lat"], ctx["end_lng"], ft.pickup_lat, ft.pickup_lng)
+            ctx["end_to_pickup_min"] = distance_to_minutes(ctx["end_to_pickup_km"])
+            ctx["time_to_start"] = ft.start_minute - now_minute
+            ctx["time_to_deadline"] = (ft.home_deadline_minute - now_minute) if ft.home_deadline_minute > 0 else 9999
+
+        return ctx
+
+    @staticmethod
+    def _apply_verification_feedback(
+        verification: dict[str, Any],
+        candidates: list[Candidate],
+        chosen: Candidate,
+        scenario: str,
+        policy: PreferencePolicy,
+        memory: DriverMemory,
+        now_minute: int,
+    ) -> Candidate | None:
+        """When Qwen says unsafe, choose the safest fallback action."""
+        risk = str(verification.get("risk", "low")).lower()
+
+        if risk not in ("medium", "high"):
+            return None  # Only act on medium/high risk
+
+        # For home_night risk: prefer reposition home or wait
+        if scenario == "home_night":
+            for c in candidates:
+                if c.action.get("action") == "reposition":
+                    return c
+            return None  # Keep original if no reposition candidate
+
+        # For rest risk: prefer wait/rest
+        if scenario == "rest":
+            for c in candidates:
+                if c.action.get("action") == "wait":
+                    return c
+            return None
+
+        # For family risk: prefer wait (don't commit to anything)
+        if scenario == "family":
+            for c in candidates:
+                if c.action.get("action") == "wait":
+                    return c
+            return None
+
+        return None
 
     @staticmethod
     def _wait(duration_minutes: int) -> dict[str, Any]:
