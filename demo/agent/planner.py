@@ -464,26 +464,9 @@ class DeterministicPlanner:
             if best is None or plan.score > best.score:
                 best = plan
 
-        # Qwen3.5-Flash 货源评分融合 — 只在高风险或候选不确定时触发，且有冷却期
+        # Qwen3.5-Flash 货源评分融合 — 已禁用（reasoning token 成本过高，且不改变确定性选择）。
+        # 保留代码结构供后续参考。只在 suggest_decision 中使用 Qwen。
         should_rank = False
-        rank_cooldown = self._step_counter - self._qwen_last_rank_step >= 10
-        if self._qwen.enabled and evaluated_plans and self._qwen_review_count < self._qwen_max_reviews and rank_cooldown:
-            # 高风险场景：home-night、家事、必访点、熟货。
-            # 连续休息由本地规则处理，不单独触发模型货源 rerank。
-            has_risk = (
-                policy.home_night is not None
-                or policy.family_task is not None
-                or policy.required_visits
-                or policy.required_cargo is not None
-            )
-            # 候选不确定：前两名分数接近
-            if len(evaluated_plans) >= 2:
-                scores_sorted = sorted([p.score for _, p in evaluated_plans], reverse=True)
-                gap = scores_sorted[0] - scores_sorted[1]
-                uncertain = gap < max(15, abs(scores_sorted[0]) * 0.10)
-            else:
-                uncertain = False
-            should_rank = has_risk and uncertain
         if should_rank:
             constraints = {
                 "forbidden_cargo": list(policy.forbidden_cargo_names),
