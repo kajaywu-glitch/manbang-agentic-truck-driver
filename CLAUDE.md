@@ -1,19 +1,19 @@
 # Claude/Codex 项目交接说明
 
-最后更新：2026-06-04 10:45 +08:00
+最后更新：2026-06-05 12:30 +08:00
 
-本次更新：完成第二轮优化——家事窗口保护增强（48h 前瞻 + 6h 强制 + 通用完成时间检查）、休息硬性截止、空驶休息互斥、连续工作追踪。Codex 合并前复跑确定性 31 天通过：总净收入 152,340.69 元，总罚分 12,870 元，失败司机 0，token 0。
+本次更新：第三轮优化——提前 6 小时休息触发窗口（从 4h 扩展）、安静窗口感知休息截止时间、home-night 跨日 deadline 修正。确定性 31 天通过：总净收入 152,769.28 元（+429），总罚分 12,070 元（-800），失败司机 0，token 0。
 
 这份文档是给下一次接手的模型优先阅读的项目状态说明。目标是让新会话不用重新摸索环境、赛题约束和当前策略问题，就能直接继续修改 `demo/agent/`。
 
-## 当前结论（截至 2026-06-04 10:45 +08:00）
+## 当前结论（截至 2026-06-05 12:30 +08:00）
 
-- 仓库：`G:\manbang-agentic-truck-driver-main\manbang-agentic-truck-driver-main`
-- 当前稳定分支：`main`
-- 当前审阅分支：`mimo/second-round-optimization`
-- 最新确定性 31 天结果：总净收入 `152,340.69`，总偏好罚分 `12,870`，`failed_driver_count = 0`，`total_token_usage = 0`。
+- 仓库：`D:\竞赛`
+- 当前工作分支：`mimo/third-round-optimization`
+- 当前稳定分支：`main`（含 `mimo/second-round-optimization` 合并结果：152,340.69 / 12,870）
+- 最新确定性 31 天结果：总净收入 `152,769.28`，总偏好罚分 `12,070`，`failed_driver_count = 0`，`total_token_usage = 0`。
 - 当前主路径是确定性滚动规划；`qwen3.5-flash` 已集成到 `planner.py` 主决策流程（rank_cargos、suggest_decision、apply_qwen_hints），但默认不启用（需设置 `AGENT_ENABLE_QWEN35_FLASH=1`）。
-- 本轮 `mimo/second-round-optimization` 在 Risk-Gated MPC 基础上继续收紧家事、home-night、休息与 Qwen 冷却逻辑；关闭 Qwen 的完整 31 天仿真和 `calc_monthly_income.py` 已通过。
+- 本轮 `mimo/third-round-optimization` 延长休息触发窗口至 6 小时，添加安静窗口感知休息截止时间，并修正 home-night 跨日 deadline。D006 罚分从 400 降至 200，D002 从 1800 降至 1600。
 
 ## 本轮改动与审查修正（mimo/risk-gated-mpc，2026-05-29 19:42 +08:00）
 
