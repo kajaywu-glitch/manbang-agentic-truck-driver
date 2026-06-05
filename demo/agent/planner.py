@@ -267,13 +267,17 @@ class DeterministicPlanner:
                 if dist > visit.radius_km and dist <= 120 and self._active_allowed(policy, now_minute, now_minute + distance_to_minutes(dist)):
                     return {"action": "reposition", "params": {"latitude": visit.lat, "longitude": visit.lng}}
 
-        # 连续休息前移：提前 8 小时（480 分钟）检查，避免 query_cargo 切碎休息窗口
+        # 连续休息前移：根据休息需求动态调整预触发窗口
+        # 休息需求越长，预触发越早（避免长休息被 cargo 切碎）
         rest_remaining = needs_rest_today(policy, memory, now_minute)
         if rest_remaining > 0:
+            rest_minutes = int(policy.daily_rest_minutes or 0)
+            # Pre-trigger = max(4h, rest_minutes) — proportional to rest need
+            pre_trigger = max(240, rest_minutes)
+
             # Early-morning rest continuation: if the last action was a
             # substantial wait extending to or past midnight, keep resting
-            # instead of breaking continuity with a cargo query.
-            if minute_of_day(now_minute) < 480 and memory.records:
+            if minute_of_day(now_minute) < pre_trigger and memory.records:
                 last = memory.records[-1]
                 if last.action_name == "wait" and last.action_exec_cost >= 60:
                     if abs(last.step_end - now_minute) <= 10:
@@ -281,8 +285,7 @@ class DeterministicPlanner:
 
             latest_start = self._latest_rest_start(policy, now_minute)
             mod = minute_of_day(now_minute)
-            # 提前 8 小时开始休息，确保当天能完成所需连续休息
-            if mod >= latest_start - 480:
+            if mod >= latest_start - pre_trigger:
                 duration = max(60, min(policy.daily_rest_minutes, day_end(now_minute) - now_minute))
                 return self._wait(duration)
             # 如果当前正在休息中（最近动作是 wait >= 60 分钟），不打断
