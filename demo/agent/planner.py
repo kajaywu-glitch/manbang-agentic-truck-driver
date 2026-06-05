@@ -286,17 +286,26 @@ class DeterministicPlanner:
         # 连续休息前移：提前 6 小时检查，避免 query_cargo 切碎休息窗口
         rest_remaining = needs_rest_today(policy, memory, now_minute)
         if rest_remaining > 0:
+            # Early-morning rest continuation: if the last action was a
+            # substantial wait extending to or past midnight, keep resting
+            # instead of breaking continuity with a cargo query.
+            if minute_of_day(now_minute) < 360 and memory.records:
+                last = memory.records[-1]
+                if last.action_name == "wait" and last.action_exec_cost >= 60:
+                    if abs(last.step_end - now_minute) <= 10:
+                        return self._wait(max(60, rest_remaining))
+
             latest_start = self._latest_rest_start(policy, now_minute)
             mod = minute_of_day(now_minute)
-            # 提前 6 小时开始休息，使用完整休息时长确保连续性
+            # 提前 6 小时开始休息，允许跨天完成
             if mod >= latest_start - 360:
-                duration = max(60, min(policy.daily_rest_minutes, day_end(now_minute) - now_minute))
+                duration = max(60, policy.daily_rest_minutes - memory.longest_rest_today(now_minute))
                 return self._wait(duration)
             # 如果当前正在休息中（最近动作是 wait >= 60 分钟），不打断
             if memory.records:
                 last = memory.records[-1]
                 if last.action_name == "wait" and last.action_exec_cost >= 60:
-                    return self._wait(max(60, min(policy.daily_rest_minutes, day_end(now_minute) - now_minute)))
+                    return self._wait(max(60, policy.daily_rest_minutes - memory.longest_rest_today(now_minute)))
         return None
 
     def _family_action(
@@ -821,7 +830,7 @@ class DeterministicPlanner:
             # 更积极地触发休息：提前4小时，或没有好订单时提前3小时
             has_good_cargo = best_cargo is not None and best_cargo.score > 100
             if minute_of_day(now_minute) >= latest_start - 240 or (not has_good_cargo and rest_remaining > 60):
-                duration = max(60, min(rest_remaining, day_end(now_minute) - now_minute))
+                duration = max(60, rest_remaining)
                 return Candidate(self._wait(duration), rest_score, "rest")
         if not items:
             return Candidate(self._wait(60), 10.0, "no_cargo")
