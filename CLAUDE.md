@@ -1,19 +1,28 @@
 # Claude/Codex 项目交接说明
 
-最后更新：2026-06-06 00:00 +08:00
+最后更新：2026-06-06 18:00 +08:00
 
-本次更新：完成第三轮确定性优化（+429 净收入，-800 罚分）并完成 Qwen3.5-Flash 全面集成测试。结论：Qwen 当前不适合完整集成（完整 31 天导致净收入 -9,874），需要领域特化 prompt 或换用非推理模型。确定性基线已稳定在 152,769.28 / 12,070。
+本次更新：Qwen v2 集成策略大改——从"候选选择器"改为"约束验证器"，从推理模型 qwen3.5-flash 切换为非推理 qwen-plus，修复跨天休息追踪 bug（预期 D002/D008 罚分大幅下降）。确定性基线已于 @00:00 记录为 152,769.28 / 12,070；Qwen v2 短测和完整 31 天评测待执行。
 
 这份文档是给下一次接手的模型优先阅读的项目状态说明。目标是让新会话不用重新摸索环境、赛题约束和当前策略问题，就能直接继续修改 `demo/agent/`。
 
-## 当前结论（截至 2026-06-06 00:00 +08:00）
+## 当前结论（截至 2026-06-06 18:00 +08:00）
 
 - 仓库：`D:\竞赛`
 - 当前工作分支：`deepseek/third-round-optimization`
 - 当前稳定分支：`main`（含 Codex 合并结果）
-- 最新确定性 31 天结果：总净收入 `152,769.28`，总偏好罚分 `12,070`，`failed_driver_count = 0`，`total_token_usage = 0`。
-- **Qwen 集成测试结论**：`qwen3.5-flash` 已集成但不适合当前场景。完整 31 天 Qwen 模式（max_reviews=10）净收入 142,895（比确定性低 9,874），D009 从 10,526 暴跌至 423。原因：模型在 suggest_decision 中看到 deterministic_score 后直接选最高分（无价值）；移除分数后模型乱选（有害）。`rank_cargos` 已禁用（每次 ~5000 reasoning token，不改变决策）。
-- 本轮 `deepseek/third-round-optimization` 完成了：6h 休息触发窗口、安静窗口感知休息截止、home-night 跨日 deadline 修正、Qwen 全面测试与结论记录。
+- 最新确定性 31 天结果（@00:00）：总净收入 `152,769.28`，总偏好罚分 `12,070`，`failed_driver_count = 0`，`total_token_usage = 0`。
+- **Qwen v1 集成测试结论**（@00:00，已废弃）：`qwen3.5-flash` + suggest_decision 导致净收入 -9,874。rank_cargos 已禁用。
+- **Qwen v2 集成策略**（本轮实施，待测试）：
+  - 模型从 `qwen3.5-flash`（推理模型，~5000 reasoning token/call）切换为 `qwen-plus`（非推理，~0 reasoning token）
+  - 从"候选选择器"改为"约束验证器"：Qwen 不再在候选中选，而是检查确定性选择是否违反 home_night/rest/family 硬约束
+  - 领域特化 prompt：每个场景有专门的验证 prompt，提供计算好的距离/时间/截止时间
+  - Qwen 仅做顾问，最终决定权在本地代码
+  - 可配置：`AGENT_QWEN_MODEL`（默认 `qwen-plus`），`AGENT_QWEN_MAX_REVIEWS`（默认 `10`）
+- **跨天休息追踪修复**（本轮实施，待测试）：
+  - `state_tracker.py`：`longest_rest_for_day()` 现在跨午夜合并 wait 区间
+  - `planner.py`：移除休息等待的 `day_end` 上限，允许跨天完成；新增清晨休息续接
+  - 预期 D002 罚分 1,600 → <400，D008 罚分 2,800 → <400
 
 ## 本轮改动与审查修正（deepseek/risk-gated-mpc，2026-05-29 19:42 +08:00）
 

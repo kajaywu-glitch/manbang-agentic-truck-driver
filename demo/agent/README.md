@@ -9,38 +9,36 @@
 - `preference_rules.py`：把运行时 `preferences` 文本解析为 `PreferencePolicy`。
 - `state_tracker.py`：从 `query_decision_history` 重建累计接单数、休息段、空驶里程、到访天数、连续工作时长等。
 - `geo.py`：时间和地理计算工具。
-- `llm_helper.py`：可选 Qwen3.5-Flash 偏好结构化、货源评分和候选复审接口。
+- `llm_helper.py`：Qwen 偏好结构化 + 领域特化约束验证接口（v2：从候选选择改为约束验证）。
 
-## 算法策略：Risk-Gated MPC + 稀疏 Qwen 顾问
+## 算法策略：Risk-Gated MPC + Qwen 约束验证
 
 ### 核心思路
 
 1. 本地 Planner 先做硬约束可行性检查：家事、home-night、连续休息、熟货、必访点、禁入区。
-2. 对剩余候选做短视滚动评分：`expected_net - deadhead_cost - time_cost - penalty_risk + preference_progress_bonus`。
-3. 增加 `risk_level`：只有高风险偏好且候选分数接近时，才允许 Qwen 介入。
-4. Qwen 只做偏好结构化、货源评分和候选裁决提示，最终动作仍由本地代码校验。
+2. 对剩余候选做短视滚动评分。
+3. 确定性选择产生后，Qwen 以**约束验证器**角色检查是否违反 home_night/rest/family 硬约束。
+4. Qwen 返回 `{safe, risk, concern, suggestion}` — 本地代码决定是否调整。
+5. **Qwen 不再在候选中选择**（v1 的 suggest_decision 已被 replace）。
 
-### Risk-Gated MPC
+### Qwen v2 集成（2026-06-06，待测试）
 
-- `_estimate_penalty_risk()`：对每个接单候选估算罚分风险。
-- 检查 home-night 回家可达性、家事窗口侵占、休息时间不足、必访点影响。
-- 罚分风险 >= 500 的候选直接拒绝。
-
-### 约束处理
-
-- **D009 home-night**：16:00 后限卸货点距家 60km，18:00 后限 30km，20:00 后不接单。15:00/17:00/19:00 主动 reposition 回家。跨日完单使用第二天 deadline。
-- **D010 家事**：48 小时前瞻预警（60% 阈值），6 小时强制前往接人点，通用完成时间检查（完成+赶路 > 家事开始-2h → 拒绝）。家事窗口内不接单。
-- **连续休息**：提前 6 小时触发休息（从 4h 扩展），使用安静窗口感知的最晚休息开始时间。硬性截止：超过最晚休息时间 → 拒绝接单（必需货物除外）。空驶时如果需要休息则跳过空驶。
-- **必访点**：月度前瞻，剩余天数紧张时更积极安排。
-
-### Qwen3.5-Flash 集成（已测试，当前保守模式）
-
-- `preference_hints()`：结构化偏好文本，每 driver 调用一次并缓存。~1100 token/driver。**正常工作**。
-- `rank_cargos()`：**已禁用**（代码保留）。~5000 reasoning token/call，模型总是确认确定性最高分。
-- `suggest_decision()`：**保守触发**（5 步冷却期，高风险 AND 分数接近才触发）。~750 token/call。
+- **模型切换**：`qwen3.5-flash` → `qwen-plus`（非推理模型，消除 ~5000 reasoning token/call）
+- **可配置**：`AGENT_QWEN_MODEL`（默认 `qwen-plus`），`AGENT_QWEN_MAX_REVIEWS`（默认 `10`）
+- **三种领域特化验证 prompt**：
+  - `home_night`：检查 23:00 前能否到家（16:00+ 触发）
+  - `rest`：检查接单后剩余时间能否完成连续休息
+  - `family`：检查操作是否与家事窗口冲突（48h 前瞻）
+- `preference_hints()`：偏好结构化，每 driver 一次并缓存。**保持不变**。
+- `rank_cargos()`：**已禁用**（代码保留）。
+- `suggest_decision()`：**已替换**为 `verify_constraints()`。
 - 安全降级：模型调用失败时完全回退确定性逻辑。
 
-**Qwen 测试结论**：完整 31 天 Qwen 模式（max_reviews=10）净收入 142,895，比确定性基线 152,769 低 9,874。D009 从 10,526 暴跌至 423。原因：模型在 suggest_decision 中看到 deterministic_score 后直接选最高分（无价值）；移除分数后模型乱选（有害）。需要领域特化 prompt 或换用非推理模型。
+### 跨天休息追踪修复（2026-06-06）
+
+- `state_tracker.py`：`longest_rest_for_day()` 现在跨午夜合并连续的 wait 区间
+- `planner.py`：移除休息等待的 `day_end` 上限；新增清晨（06:00 前）休息续接检查
+- 预期 D002（8 次违规）和 D008（7 次违规）罚分大幅下降
 
 ## 评测结果
 
