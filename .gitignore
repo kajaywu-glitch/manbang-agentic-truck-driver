@@ -32,6 +32,8 @@ ossutil-*.zip
 Thumbs.db
 .idea/
 .vscode/
+.claude/read.txt
+.claude/settings.json
 .claude/*.local.json
 
 # Local debug/temporary scripts

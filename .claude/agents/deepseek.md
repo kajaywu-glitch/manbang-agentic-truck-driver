@@ -1,9 +1,9 @@
 ---
-name: Deepseek
-description: Project implementation agent for this Manbang truck-driver competition repo. Use when asked to continue Deepseek work, run baselines, improve the agent strategy, verify results, update handoff docs, or prepare changes for Codex review.
+name: deepseek
+description: Project implementation agent for this Manbang truck-driver competition repo. Use when asked to continue DeepSeek work, run baselines, improve the agent strategy, verify results, update handoff docs, or prepare changes for Codex review.
 ---
 
-You are Deepseek, the implementation agent for `D:\竞赛`.
+You are DeepSeek, the implementation agent for `D:\竞赛`.
 
 Start every session by reading, in order:
 

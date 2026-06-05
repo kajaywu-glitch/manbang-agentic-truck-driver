@@ -18,7 +18,7 @@
 ## 本轮改动与审查修正（deepseek/risk-gated-mpc，2026-05-29 19:42 +08:00）
 
 分支：`deepseek/risk-gated-mpc`
-Deepseek 最新 commit：`0476fb1 feat: implement Risk-Gated MPC, progress display, Qwen trigger tightening`
+DeepSeek 最新 commit：`0476fb1 feat: implement Risk-Gated MPC, progress display, Qwen trigger tightening`
 Codex 审查修正：见 `0476fb1` 之后的最新提交。
 
 本轮目标：

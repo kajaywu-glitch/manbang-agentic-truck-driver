@@ -1,23 +1,23 @@
-# Deepseek + Codex 协作工作流
+# DeepSeek + Codex 协作工作流
 
 最后更新：2026-06-06 00:00 +08:00
 
 本次更新：完成 Qwen3.5-Flash 全面集成测试。结论：Qwen 当前不适合完整集成（完整 31 天净收入 -9,874），需要领域特化 prompt 或换用非推理模型。确定性基线稳定在 152,769.28 / 12,070。rank_cargos 已禁用，suggest_decision 保守触发保留。
 
-这份文档给 Deepseek、Claude Code、Codex 和用户共同使用。目标是让 Deepseek 可以持续构建，Codex 可以随时审阅，而不会互相覆盖代码或把未验证改动直接推到 `main`。
+这份文档给 DeepSeek、Claude Code、Codex 和用户共同使用。目标是让 DeepSeek 可以持续构建，Codex 可以随时审阅，而不会互相覆盖代码或把未验证改动直接推到 `main`。
 
 ## 先读顺序
 
 每次新会话开始，先按这个顺序阅读：
 
-1. `WORKFLOW_Deepseek_CODEX.md`：协作规则和 Git 流程。
+1. `WORKFLOW_DEEPSEEK_CODEX.md`：协作规则和 Git 流程。
 2. `CLAUDE.md`：当前项目状态、环境、最近评测结果、下一步优先级。
 3. `demo/agent/README.md`：Agent 内部结构和 Qwen3.5-Flash 接入任务。
 4. `项目总设计方向.md`：赛题约束、总体算法路线和审阅关注点。
 
 ## 角色分工
 
-Deepseek 负责实现：
+DeepSeek 负责实现：
 
 - 在独立分支上做代码改动。
 - 小步提交，每个提交只解决一个明确问题。
@@ -26,14 +26,14 @@ Deepseek 负责实现：
 
 Codex 负责审阅：
 
-- 拉取 Deepseek 分支，检查 diff、规则合规性、潜在 bug 和测试结果。
+- 拉取 DeepSeek 分支，检查 diff、规则合规性、潜在 bug 和测试结果。
 - 必要时在单独的 `codex/...` 分支上提交 review fix。
 - 给出审阅结论：可继续、需修复、或建议合并。
 
 用户负责调度：
 
-- 指定 Deepseek 当前要做的分支或任务。
-- 在 Deepseek push 后叫 Codex 审阅。
+- 指定 DeepSeek 当前要做的分支或任务。
+- 在 DeepSeek push 后叫 Codex 审阅。
 - 决定是否合并到 `main`。
 
 ## 分支规则
@@ -59,19 +59,19 @@ git -C D:\竞赛 status --short --branch
 
 不要直接覆盖。先判断这些改动是谁做的：
 
-- 如果是 Deepseek 当前工作，继续在当前分支提交。
+- 如果是 DeepSeek 当前工作，继续在当前分支提交。
 - 如果误在 `main` 上改了，先新建分支保存：
 
 ```powershell
 git -C D:\竞赛 switch -c deepseek/current-work
 git -C D:\竞赛 add demo/agent
-git -C D:\竞赛 commit -m "Save current Deepseek work"
+git -C D:\竞赛 commit -m "Save current DeepSeek work"
 git -C D:\竞赛 push -u origin deepseek/current-work
 ```
 
 不要使用 `git reset --hard`、`git checkout -- 文件` 等会丢弃别人改动的命令，除非用户明确要求。
 
-## Deepseek 开发流程
+## DeepSeek 开发流程
 
 从最新远程开始：
 
@@ -127,7 +127,7 @@ git -C D:\竞赛 push -u origin deepseek/任务名
 
 只提交本轮相关文件。不要顺手提交本地配置、结果目录或无关临时文件。
 
-## Deepseek 交接格式
+## DeepSeek 交接格式
 
 每次 push 后，在 `CLAUDE.md` 或给用户的消息里写清楚：
 
@@ -186,13 +186,13 @@ git diff main...HEAD
 - `compileall` 通过；确定性 `--max-steps 200` 短测通过。完整 31 天确定性基线需要在 `main@ec2f92c` 上重跑。
 - 删除 hardcode 前的旧 31 天结果只能作为历史对比，不再作为可合并成绩。
 
-Codex 如果只给审阅意见，不直接改 Deepseek 分支。若需要修复，另开分支：
+Codex 如果只给审阅意见，不直接改 DeepSeek 分支。若需要修复，另开分支：
 
 ```powershell
 git switch -c codex/fix-任务名
 ```
 
-然后提交并推送，让用户决定是否让 Deepseek 合并。
+然后提交并推送，让用户决定是否让 DeepSeek 合并。
 
 ## Qwen3.5-Flash 协作要求
 
@@ -214,7 +214,7 @@ cd D:\竞赛
 .\scripts\load_local_env.ps1
 ```
 
-真实 key 放在 `D:\竞赛\.env.local`。该文件已被 Git 忽略，只能留在用户本机；Deepseek 不得把 `.env.local`、真实 key、截图或控制台明文 key 提交到仓库或贴进交接文档。脚本只把 key 注入当前 PowerShell 进程，随后在同一终端运行仿真即可。
+真实 key 放在 `D:\竞赛\.env.local`。该文件已被 Git 忽略，只能留在用户本机；DeepSeek 不得把 `.env.local`、真实 key、截图或控制台明文 key 提交到仓库或贴进交接文档。脚本只把 key 注入当前 PowerShell 进程，随后在同一终端运行仿真即可。
 
 如果脚本被执行策略拦截：
 
@@ -266,11 +266,11 @@ C:\Users\20689\miniconda3\Scripts\conda.exe run -n mus-tread python calc_monthly
 ```
 
 5. 短测满足无崩溃、无 `validation_error`、token > 0 后，先把 `AGENT_QWEN_MAX_REVIEWS` 提高到 `50` 再跑较长短测；只有确认模型调用没有频繁 60 秒超时，才允许完整 31 天评测。交接说明中必须记录：总净收入、总罚分、D009/D010 罚分、运行时间、token 用量、是否出现模型 fallback。
-6. 完整 Qwen 评测前，Deepseek 必须先收紧触发条件：不能在普通接单步骤频繁 `rank_cargos`，应只在 home-night、家事、连续休息、指定熟货、必访点或候选分数接近时触发。
+6. 完整 Qwen 评测前，DeepSeek 必须先收紧触发条件：不能在普通接单步骤频繁 `rank_cargos`，应只在 home-night、家事、连续休息、指定熟货、必访点或候选分数接近时触发。
 
 ## Hybrid Agent 启动门槛
 
-Deepseek 不需要把确定性策略调到完美后才开始 Hybrid Agent。只要满足下面门槛，就应停止大规模纯规则调参，进入 Qwen3.5-Flash 受控接入阶段。
+DeepSeek 不需要把确定性策略调到完美后才开始 Hybrid Agent。只要满足下面门槛，就应停止大规模纯规则调参，进入 Qwen3.5-Flash 受控接入阶段。
 
 可以开始 Hybrid Agent 的条件：
 
@@ -299,7 +299,7 @@ Deepseek 不需要把确定性策略调到完美后才开始 Hybrid Agent。只�
 - 没有模型失败降级路径。
 - Qwen 调用不是通过 `SimulationApiPort.model_chat_completion`。
 
-如果已经满足启动门槛，Deepseek 应明确切换任务目标：
+如果已经满足启动门槛，DeepSeek 应明确切换任务目标：
 
 ```text
 停止继续纯确定性调参。保留当前确定性 Planner 作为 fallback，从现在开始进入 Hybrid Agent 阶段。
@@ -399,7 +399,7 @@ $env:AGENT_PROGRESS_EVERY_STEPS = "1"
 - 不得输出 API key、完整 prompt、完整货源列表或 `.env.local`。
 - 若在 `demo/agent/` 内实现，建议放在 `model_decision_service.py` 或独立 `progress.py`，只包裹决策输入/输出和耗时统计。
 - 若在 `demo/server/bench/` 本地 runner 实现，必须保持评分与动作执行逻辑不变，只增加可选日志。
-- 完整评测时，Deepseek 交接说明必须写明进度输出是否可用、如何开启、最后跑到哪个 driver/step。
+- 完整评测时，DeepSeek 交接说明必须写明进度输出是否可用、如何开启、最后跑到哪个 driver/step。
 
 ## Hybrid Agent 约束
 
@@ -438,10 +438,10 @@ git -C D:\竞赛 push origin main
 
 ## 给用户的最短操作口令
 
-让 Deepseek 开始下一轮优化（口令更新时间：2026-06-06 00:00 +08:00）：
+让 DeepSeek 开始下一轮优化（口令更新时间：2026-06-06 00:00 +08:00）：
 
 ```text
-请先阅读 D:\竞赛\WORKFLOW_Deepseek_CODEX.md、D:\竞赛\CLAUDE.md 和 D:\竞赛\demo\agent\README.md。当前分支 deepseek/third-round-optimization，确定性基线 152,769.28 / 12,070。Qwen3.5-Flash 已完成全面测试，结论是不适合当前完整集成（净收入 -9,874）。rank_cargos 已禁用，suggest_decision 保守触发保留。
+请先阅读 D:\竞赛\WORKFLOW_DEEPSEEK_CODEX.md、D:\竞赛\CLAUDE.md 和 D:\竞赛\demo\agent\README.md。当前分支 deepseek/third-round-optimization，确定性基线 152,769.28 / 12,070。Qwen3.5-Flash 已完成全面测试，结论是不适合当前完整集成（净收入 -9,874）。rank_cargos 已禁用，suggest_decision 保守触发保留。
 
 下一轮优先级：
 1. 换用非推理模型（qwen-turbo/qwen-plus）或设计领域特化 prompt
@@ -455,5 +455,5 @@ git -C D:\竞赛 push origin main
 让 Codex 审阅（口令更新时间：2026-06-06 00:00 +08:00）：
 
 ```text
-请审阅 Deepseek 新分支的最新改动，按 WORKFLOW_Deepseek_CODEX.md 的审阅规则检查是否违反赛题约束、是否有 hardcode、结果是否可信、Qwen 调用是否受控，以及是否可以合并。
+请审阅 DeepSeek 新分支的最新改动，按 WORKFLOW_DEEPSEEK_CODEX.md 的审阅规则检查是否违反赛题约束、是否有 hardcode、结果是否可信、Qwen 调用是否受控，以及是否可以合并。
 ```
