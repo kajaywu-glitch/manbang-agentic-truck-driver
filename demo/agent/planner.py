@@ -314,13 +314,7 @@ class DeterministicPlanner:
         at_home = haversine_km(lat, lng, family.home_lat, family.home_lng) <= family.radius_km
 
         # 如果已到家且在 stay_until 之前，等待（这是硬约束，必须等到 stay_until）
-        # 但需要确保当天获得足够的连续休息（不能只等待到午夜让当天休息不足）
         if at_home and now_minute < family.stay_until_minute:
-            rest_needed_today = max(0, int(policy.daily_rest_minutes or 0) - memory.longest_rest_today(now_minute))
-            today_remaining = max(0, day_end(now_minute) - now_minute)
-            # If today has less remaining time than needed rest, wait at least to day_end
-            if rest_needed_today > 0 and today_remaining < rest_needed_today:
-                return self._wait(max(rest_needed_today, today_remaining))
             return self._wait(max(60, family.stay_until_minute - now_minute))
 
         # 如果已过 stay_until，家事完成
@@ -349,12 +343,7 @@ class DeterministicPlanner:
             return {"action": "reposition", "params": {"latitude": family.home_lat, "longitude": family.home_lng}}
 
         # 到家后等待到 stay_until（硬约束，必须等到）
-        # 确保今天有足够的连续休息
         if now_minute < family.stay_until_minute:
-            rest_needed_today = max(0, int(policy.daily_rest_minutes or 0) - memory.longest_rest_today(now_minute))
-            today_remaining = max(0, day_end(now_minute) - now_minute)
-            if rest_needed_today > 0 and today_remaining < rest_needed_today:
-                return self._wait(max(rest_needed_today, today_remaining))
             return self._wait(max(60, family.stay_until_minute - now_minute))
         return None
 
