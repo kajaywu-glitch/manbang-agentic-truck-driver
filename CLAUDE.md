@@ -1,19 +1,19 @@
 # Claude/Codex 项目交接说明
 
-最后更新：2026-06-05 12:30 +08:00
+最后更新：2026-06-06 00:00 +08:00
 
-本次更新：第三轮优化——提前 6 小时休息触发窗口（从 4h 扩展）、安静窗口感知休息截止时间、home-night 跨日 deadline 修正。确定性 31 天通过：总净收入 152,769.28 元（+429），总罚分 12,070 元（-800），失败司机 0，token 0。
+本次更新：完成第三轮确定性优化（+429 净收入，-800 罚分）并完成 Qwen3.5-Flash 全面集成测试。结论：Qwen 当前不适合完整集成（完整 31 天导致净收入 -9,874），需要领域特化 prompt 或换用非推理模型。确定性基线已稳定在 152,769.28 / 12,070。
 
 这份文档是给下一次接手的模型优先阅读的项目状态说明。目标是让新会话不用重新摸索环境、赛题约束和当前策略问题，就能直接继续修改 `demo/agent/`。
 
-## 当前结论（截至 2026-06-05 12:30 +08:00）
+## 当前结论（截至 2026-06-06 00:00 +08:00）
 
 - 仓库：`D:\竞赛`
 - 当前工作分支：`mimo/third-round-optimization`
-- 当前稳定分支：`main`（含 `mimo/second-round-optimization` 合并结果：152,340.69 / 12,870）
+- 当前稳定分支：`main`（含 Codex 合并结果）
 - 最新确定性 31 天结果：总净收入 `152,769.28`，总偏好罚分 `12,070`，`failed_driver_count = 0`，`total_token_usage = 0`。
-- 当前主路径是确定性滚动规划；`qwen3.5-flash` 已集成到 `planner.py` 主决策流程（rank_cargos、suggest_decision、apply_qwen_hints），但默认不启用（需设置 `AGENT_ENABLE_QWEN35_FLASH=1`）。
-- 本轮 `mimo/third-round-optimization` 延长休息触发窗口至 6 小时，添加安静窗口感知休息截止时间，并修正 home-night 跨日 deadline。D006 罚分从 400 降至 200，D002 从 1800 降至 1600。
+- **Qwen 集成测试结论**：`qwen3.5-flash` 已集成但不适合当前场景。完整 31 天 Qwen 模式（max_reviews=10）净收入 142,895（比确定性低 9,874），D009 从 10,526 暴跌至 423。原因：模型在 suggest_decision 中看到 deterministic_score 后直接选最高分（无价值）；移除分数后模型乱选（有害）。`rank_cargos` 已禁用（每次 ~5000 reasoning token，不改变决策）。
+- 本轮 `mimo/third-round-optimization` 完成了：6h 休息触发窗口、安静窗口感知休息截止、home-night 跨日 deadline 修正、Qwen 全面测试与结论记录。
 
 ## 本轮改动与审查修正（mimo/risk-gated-mpc，2026-05-29 19:42 +08:00）
 
@@ -224,44 +224,52 @@ set AGENT_ENABLE_QWEN35_FLASH=1
 - D003 月度空驶限额已经明显修好，最近完整结果中空驶 `99.93km`，罚分 0。
 - D009 指定熟货 `240646` 已能接到，熟货罚分 0。
 - D010 家事任务已改为运行时偏好解析路径（2026-05-29 删除 hardcode），`parse_preferences()` 能在偏好可见后正确解析出 `FamilyTask`。
-- Qwen3.5-Flash 已接入主流程，但当前最新结果仍是未启用模型跑出的，token 用量 0。
+- Qwen3.5-Flash 已接入主流程但 **不适合当前场景**。详见下方 Qwen 集成测试结论。
 
-## Qwen3.5-Flash 集成状态
+## Qwen3.5-Flash 集成测试结论（2026-06-06）
+
+### 代码集成状态
 
 已完成代码集成（`planner.py` + `llm_helper.py` + `preference_rules.py`）：
 
-- `rank_cargos()`：在 `_best_cargo_plan()` 中调用，alpha=0.35 融合模型评分与确定性评分。
-- `suggest_decision()`：在 `decide()` 中候选分数接近或高风险偏好时调用，安全检查防止模型选低分候选。
+- `preference_hints()`：偏好结构化，每 driver 调用一次并缓存，~1100 token/driver。**正常工作**。
+- `rank_cargos()`：**已禁用**（代码保留）。每次 ~5000 reasoning token，模型总是确认确定性最高分，不改变决策。
+- `suggest_decision()`：**保守触发保留**（5 步冷却期，高风险 AND 分数接近才触发）。每次 ~750 token。
 - `apply_qwen_hints()`：偏好解析后调用，只能收紧约束不能放松。
-- `AGENT_QWEN_MAX_REVIEWS`（默认 500）：控制每次仿真调用次数。
 - 安全降级：模型调用失败时完全回退确定性逻辑。
 
-验收状态：
+### 完整 31 天 Qwen 仿真结果（AGENT_QWEN_MAX_REVIEWS=10）
 
-- [ ] 真正无 key 的短测/31 天评测仍需修正服务端配置校验后再确认。当前即使关闭 Qwen，`demo/server/bench/settings.py` 仍要求 `DASHSCOPE_API_KEY` 或 `TIANCHI_MODEL_API_KEY` 存在；确定性测试可用 dummy key 仅绕过配置校验，模型 token 仍为 0。
-- [x] 本机 `D:\竞赛\.env.local` 已配置真实 key，`scripts/load_local_env.ps1` 脱敏检查通过：`key_present=True`、key 形态为 `sk-...`、`.env.local` 被 Git 忽略。不要把 key 写入任何提交或文档。
-- [ ] 设置 `AGENT_ENABLE_QWEN35_FLASH=1` 后，日志能看到真实模型调用。
-- [ ] `monthly_income_202603.json` 中 token 用量不再全为 0。
-- [ ] 启用 Qwen 的完整 31 天结果要和确定性基线对比。
+| 指标 | 确定性基线 | Qwen 模式 | 变化 |
+|------|----------:|----------:|-----:|
+| 净收入 | 152,769 | 142,895 | **-9,874** |
+| 罚分 | 12,070 | 12,070 | 0 |
+| Token | 0 | 39,241 | +39,241 |
+| 耗时 | 143s | 371s | +228s |
+| D009 净收入 | 10,526 | 423 | **-10,103** |
 
-真实 key 验证计划：
+### 问题根因
 
-1. ~~**先修合规阻塞**~~ **已完成**：`planner.py` 中 D010 `driver_id` hardcode 已删除，保留通用 `preferences` 解析路径。
-2. **环境检查并限制模型调用**：
+1. **suggest_decision 无价值**：模型看到 `deterministic_score` 后直接选最高分，与确定性选择 100% 相同。
+2. **移除分数后有害**：不给分数时模型选择低分候选（如 wait -20.0 代替 cargo 190.8），被安全检查拒绝但浪费 token。
+3. **D009 严重回退**：模型在 home-night 场景做出有害决策，导致净收入暴跌。
+4. **rank_cargos token 过高**：qwen3.5-flash 是推理模型，每次 rank_cargos 产生 ~5000 reasoning token，占总 token 的 80%+。
 
-```powershell
-cd D:\竞赛
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-.\scripts\load_local_env.ps1
-$env:AGENT_QWEN_MAX_REVIEWS = "20"
-```
+### Qwen 改进建议（优先级排序）
 
-3. **短测**：在同一终端运行 200 步，确认无崩溃、日志出现 `model_chat_completion ok` 或 Agent Qwen 日志。
+1. **领域特化 prompt**：不给通用"选择最佳动作"，而是给具体约束场景（如"司机必须在 23:00 前到家，当前 18:00，距家 100km，是否接单？"）。
+2. **约束验证而非选择**：让 Qwen 验证确定性选择是否违反隐含约束，而非在候选中选择。
+3. **换用非推理模型**：使用 `qwen-turbo` 或 `qwen-plus` 替代 `qwen3.5-flash`，减少 reasoning token 消耗。
+4. **只在真正不确定时介入**：当确定性分数差距极小（<5%）且有多个合理选择时才调用。
+5. **预计算风险场景**：为 D009 home-night、D010 family、D002/D008 rest 等高风险场景预定义触发规则，让 Qwen 只在规则边界做微调。
 
-```powershell
-cd D:\竞赛\demo\server
-C:\Users\20689\miniconda3\Scripts\conda.exe run -n mus-tread python main.py --max-steps 200
-```
+### 当前默认配置
+
+- `AGENT_ENABLE_QWEN35_FLASH`：默认关闭（`=0`）
+- `AGENT_QWEN_MAX_REVIEWS`：默认 10
+- `rank_cargos`：已禁用（代码保留）
+- `suggest_decision`：保守触发（5 步冷却，高风险 AND 分数接近）
+- `preference_hints`：正常工作（缓存，每 driver 一次）
 
 4. **短测后收益检查**：确认 `monthly_income_202603.json` 无 `validation_error`，token 大于 0。若 token 仍为 0，先查环境变量是否在同一终端、`AGENT_ENABLE_QWEN35_FLASH` 是否为 `1`、模型触发条件是否没有命中。
 
@@ -358,23 +366,23 @@ C:\Users\20689\miniconda3\Scripts\conda.exe run -n mus-tread python -m compileal
 
 ### 高优先级
 
-1. **重跑合并后确定性 31 天基线**：`driver_id == "D010"` 注入已删除并合并到 `main`。先用 Qwen 关闭、dummy 或真实 key 仅满足配置校验，跑完整 31 天并计算收益，得到新的可信基线。
-2. **通用家事执行器**：优化 `_family_action()` 与 `_evaluate_cargo()`，用 `home_deadline_minute`、pickup wait、stay window 做通用约束；确保偏好可见后不再查询货源、不再接会覆盖家事窗口的订单。
-3. **D009 home_night**（罚分 9,000）：10 次 23:00 前未到家。核心问题是白天接远单后赶不回家。当前 home_night 约束效果有限，需要更强的白天定位策略（如下午主动 reposition 回家方向）。
-4. **每日连续休息**：D001(1,200)、D002(1,600)、D006(1,200)、D008(2,400)、D010(600) 仍有罚分。检查休息是否被查询耗时切碎。
-5. **内置实时进度显示**：实现 `AGENT_PROGRESS_STDERR=1` heartbeat，启动仿真时实时看到 driver/step/仿真时间/action/token，避免长时间黑箱等待。
-6. **用真实 API key 受控验证 Qwen3.5-Flash**。`.env.local` 格式已检查通过；按上面的真实 key 验证计划先跑 `--max-steps 200`，确认日志中有模型调用和 token > 0。完整 Qwen 31 天必须等调用触发条件收紧后再跑。
+1. **Qwen 领域特化 prompt**：当前 suggest_decision 使用通用 prompt，模型无法提供超越确定性评分的判断。需要为 D009 home-night、D010 family、D002/D008 rest 等场景设计专用 prompt，让 Qwen 在规则边界做微调而非自由选择。
+2. **换用非推理模型**：`qwen3.5-flash` 每次产生 ~5000 reasoning token，占总 token 的 80%+。尝试 `qwen-turbo` 或 `qwen-plus` 可大幅降低成本。
+3. **D010 家事罚分**（3,570）：偏好可见性窗口限制（10:00 可见，但 08:44 已接单）。需要 simkit 层面修改或接受现状。
+4. **D002/D008 休息违规**（8/7 天）：跨日休息被切碎，需要跨日休息预测或更早的休息触发。
 
 ### 已知问题
 
-1. **D010 收益为负**（净收入 -6,567）：家事窗口占 3/10-3/13 共 3.5 天，导致收益大幅下降。合规修复后再优化家事窗口外的接单效率。
-2. **D003 收益过低**（净收入仅 830）：空驶限额限制了接单能力。
+1. **D010 家事迟到是结构性限制**：偏好在 3/10 10:00 才可见，但司机在 08:44 已接长途货物。无法在 Agent 层面修复。
+2. **D003 收益过低**（净收入 830）：空驶限额限制了接单能力。
 3. **market_heat 跨步记忆**：当前只在当前决策步内累积，需增加实例级缓存。
+4. **Qwen suggest_decision 无价值**：模型看到 deterministic_score 后直接选最高分。移除分数后模型乱选。需要完全不同的交互方式。
 
 ### 低优先级
 
 1. D003 空驶限额内的收益优化：更精准选择高价值订单。
 2. market_heat 跨步记忆：当前 `market_heat` 只在当前决策步内累积，`build_memory()` 不恢复。需要在 `DeterministicPlanner` 内增加实例级缓存。
+3. Qwen 约束验证模式：让 Qwen 检查确定性选择是否违反隐含约束，而非在候选中选择。
 
 ## 调试命令
 

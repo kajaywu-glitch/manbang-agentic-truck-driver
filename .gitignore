@@ -33,3 +33,7 @@ Thumbs.db
 .idea/
 .vscode/
 .claude/*.local.json
+
+# Local debug/temporary scripts
+demo/check_results.py
+demo/debug_*.py

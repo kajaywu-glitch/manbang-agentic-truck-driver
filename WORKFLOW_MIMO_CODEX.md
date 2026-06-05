@@ -1,8 +1,8 @@
 # Mimo + Codex 协作工作流
 
-最后更新：2026-05-29 19:42 +08:00
+最后更新：2026-06-06 00:00 +08:00
 
-本次更新：同步 `mimo/risk-gated-mpc@0476fb1` 审查修正和下一轮协作口令，明确 Qwen 必须低额度短测，进度显示必须体现仿真日期、完成司机和阶段结果。
+本次更新：完成 Qwen3.5-Flash 全面集成测试。结论：Qwen 当前不适合完整集成（完整 31 天净收入 -9,874），需要领域特化 prompt 或换用非推理模型。确定性基线稳定在 152,769.28 / 12,070。rank_cargos 已禁用，suggest_decision 保守触发保留。
 
 这份文档给 Mimo、Claude Code、Codex 和用户共同使用。目标是让 Mimo 可以持续构建，Codex 可以随时审阅，而不会互相覆盖代码或把未验证改动直接推到 `main`。
 
@@ -438,13 +438,21 @@ git -C D:\竞赛 push origin main
 
 ## 给用户的最短操作口令
 
-让 Mimo 开始下一轮优化（口令更新时间：2026-05-29 19:42 +08:00）：
+让 Mimo 开始下一轮优化（口令更新时间：2026-06-06 00:00 +08:00）：
 
 ```text
-请先阅读 D:\竞赛\WORKFLOW_MIMO_CODEX.md、D:\竞赛\CLAUDE.md 和 D:\竞赛\demo\agent\README.md。当前 main 已包含 D010 hardcode 删除和 risk-gated-mpc 审查修正。下一轮先重跑完整 31 天确定性基线并运行 calc_monthly_income.py；然后只用真实 key 做 AGENT_QWEN_MAX_REVIEWS=5 的短测，验证 max_tokens 是否压住 token 和耗时。进度显示要按评测视角输出：当前司机、当前仿真日期、step/max_steps、已完成司机数、累计 token、是否正在等模型、已完成司机阶段摘要。不要直接完整 Qwen 31 天。
+请先阅读 D:\竞赛\WORKFLOW_MIMO_CODEX.md、D:\竞赛\CLAUDE.md 和 D:\竞赛\demo\agent\README.md。当前分支 mimo/third-round-optimization，确定性基线 152,769.28 / 12,070。Qwen3.5-Flash 已完成全面测试，结论是不适合当前完整集成（净收入 -9,874）。rank_cargos 已禁用，suggest_decision 保守触发保留。
+
+下一轮优先级：
+1. 换用非推理模型（qwen-turbo/qwen-plus）或设计领域特化 prompt
+2. 修 D002/D008 跨日休息违规
+3. 升级内置进度显示为评测进度面板
+4. D003 空驶限额内收益优化
+
+先跑 compileall，再做策略改动。Qwen 改动必须从低额度短测起步，不要直接完整 31 天。
 ```
 
-让 Codex 审阅（口令更新时间：2026-05-29 19:42 +08:00）：
+让 Codex 审阅（口令更新时间：2026-06-06 00:00 +08:00）：
 
 ```text
 请审阅 Mimo 新分支的最新改动，按 WORKFLOW_MIMO_CODEX.md 的审阅规则检查是否违反赛题约束、是否有 hardcode、结果是否可信、Qwen 调用是否受控，以及是否可以合并。
