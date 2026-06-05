@@ -272,9 +272,8 @@ class DeterministicPlanner:
         rest_remaining = needs_rest_today(policy, memory, now_minute)
         if rest_remaining > 0:
             rest_minutes = int(policy.daily_rest_minutes or 0)
-            # Pre-trigger = max(4h, rest_minutes + 2h) — aggressive early rest
-            # to ensure continuous rest isn't fragmented by late-day cargo
-            pre_trigger = max(240, rest_minutes + 120)
+            # Pre-trigger = max(4h, rest_minutes) — proportional to rest need
+            pre_trigger = max(240, rest_minutes)
 
             # Early-morning rest continuation: if the last action was a
             # substantial wait extending to or past midnight, keep resting
