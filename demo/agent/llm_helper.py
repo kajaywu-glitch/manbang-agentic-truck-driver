@@ -252,6 +252,175 @@ class QwenFlashHelper:
             return None
 
     # ------------------------------------------------------------------
+    # 约束验证：模型检查确定性选择是否违反硬约束
+    # ------------------------------------------------------------------
+    def verify_constraints(
+        self,
+        driver_id: str,
+        scenario: str,
+        context: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Ask Qwen to verify that a candidate action respects hard constraints.
+
+        scenario is one of: 'home_night', 'rest', 'family'.
+        context provides computed values (distances, times, deadlines).
+        Returns {safe: bool, risk: 'low'|'medium'|'high', concern: str,
+                 suggestion: str} or None on failure.
+        """
+        if not self.enabled:
+            return None
+
+        prompt_data = self._build_verification_prompt(scenario, context)
+        if prompt_data is None:
+            return None
+
+        payload = {
+            "model": QWEN_MODEL,
+            "temperature": 0,
+            "max_tokens": 384,
+            "messages": [
+                {"role": "system", "content": prompt_data["system"]},
+                {"role": "user", "content": json.dumps(prompt_data["user"], ensure_ascii=False)},
+            ],
+            "response_format": {"type": "json_object"},
+        }
+
+        try:
+            resp = self._api.model_chat_completion(payload)
+            content = self._extract_content(resp)
+            if content is None:
+                return None
+            parsed = json.loads(content)
+            if not isinstance(parsed, dict):
+                return None
+            safe = parsed.get("safe")
+            risk = str(parsed.get("risk", "low")).lower()
+            if risk not in ("low", "medium", "high"):
+                risk = "low"
+            result = {
+                "safe": bool(safe) if isinstance(safe, bool) else True,
+                "risk": risk,
+                "concern": str(parsed.get("concern", "")),
+                "suggestion": str(parsed.get("suggestion", "")),
+            }
+            self._logger.info(
+                "verify_constraints driver=%s scenario=%s safe=%s risk=%s",
+                driver_id, scenario, result["safe"], result["risk"],
+            )
+            return result
+        except Exception as exc:
+            self._logger.warning("verify_constraints unavailable: %s", exc)
+            return None
+
+    @staticmethod
+    def _build_verification_prompt(
+        scenario: str,
+        ctx: dict[str, Any],
+    ) -> dict[str, Any] | None:
+        """Return {system, user} prompt dicts for a constraint scenario."""
+        if scenario == "home_night":
+            return QwenFlashHelper._build_home_night_prompt(ctx)
+        if scenario == "rest":
+            return QwenFlashHelper._build_rest_prompt(ctx)
+        if scenario == "family":
+            return QwenFlashHelper._build_family_prompt(ctx)
+        return None
+
+    @staticmethod
+    def _build_home_night_prompt(ctx: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "system": (
+                "你是货运安全审核员。司机必须在每天 23:00 前到家。"
+                "根据给定的时间、距离和截止时间判断操作是否安全。"
+                "只输出JSON: {\"safe\": bool, \"risk\": \"low\"|\"medium\"|\"high\", "
+                "\"concern\": \"风险描述\", \"suggestion\": \"建议\"}"
+            ),
+            "user": {
+                "task": "判断此操作是否会违反 23:00 前到家约束",
+                "wall_time": ctx.get("wall_time", "?"),
+                "current_lat": ctx.get("lat", 0),
+                "current_lng": ctx.get("lng", 0),
+                "home_lat": ctx.get("home_lat", 0),
+                "home_lng": ctx.get("home_lng", 0),
+                "distance_to_home_km": ctx.get("dist_home_km", 0),
+                "travel_to_home_minutes": ctx.get("travel_home_min", 0),
+                "action_type": ctx.get("action_type", "?"),
+                "action_duration_minutes": ctx.get("action_duration", 0),
+                "finish_wall_time": ctx.get("finish_time", "?"),
+                "finish_lat": ctx.get("end_lat", 0),
+                "finish_lng": ctx.get("end_lng", 0),
+                "finish_to_home_km": ctx.get("end_to_home_km", 0),
+                "finish_to_home_minutes": ctx.get("end_to_home_min", 0),
+                "deadline": "23:00",
+                "time_to_deadline_minutes": ctx.get("time_to_deadline", 0),
+                "instruction": (
+                    "如果行动结束时间 + 回家路程 >= 23:00，safe=false 且 risk=high。"
+                    "如果行动结束时间 + 回家路程在 22:30-23:00 之间，risk=medium。"
+                    "其他情况 safe=true 且 risk=low。"
+                ),
+            },
+        }
+
+    @staticmethod
+    def _build_rest_prompt(ctx: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "system": (
+                "你是货运休息合规审核员。司机每天必须连续休息指定小时数。"
+                "根据已休息时间和剩余时间判断接单是否会破坏连续休息。"
+                "只输出JSON: {\"safe\": bool, \"risk\": \"low\"|\"medium\"|\"high\", "
+                "\"concern\": \"风险描述\", \"suggestion\": \"建议\"}"
+            ),
+            "user": {
+                "task": "判断接单是否会违反连续休息约束",
+                "wall_time": ctx.get("wall_time", "?"),
+                "required_rest_hours": ctx.get("rest_hours", 0),
+                "rested_today_minutes": ctx.get("rested_today", 0),
+                "rest_remaining_minutes": ctx.get("rest_remaining", 0),
+                "minutes_left_today": ctx.get("minutes_left_today", 0),
+                "action_type": ctx.get("action_type", "?"),
+                "action_duration_minutes": ctx.get("action_duration", 0),
+                "finish_wall_time": ctx.get("finish_time", "?"),
+                "minutes_after_finish": ctx.get("after_finish", 0),
+                "instruction": (
+                    "如果行动结束后当天剩余分钟数 < 还需休息分钟数，safe=false 且 risk=high。"
+                    "如果当天剩余分钟数在还需休息分钟数的 1.0-1.2 倍之间，risk=medium。"
+                    "其他情况 safe=true 且 risk=low。"
+                ),
+            },
+        }
+
+    @staticmethod
+    def _build_family_prompt(ctx: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "system": (
+                "你是货运家庭事务审核员。司机有家中急事需要处理。"
+                "根据家事时间窗口和截止时间判断操作是否会冲突。"
+                "只输出JSON: {\"safe\": bool, \"risk\": \"low\"|\"medium\"|\"high\", "
+                "\"concern\": \"风险描述\", \"suggestion\": \"建议\"}"
+            ),
+            "user": {
+                "task": "判断接单是否会与家事安排冲突",
+                "wall_time": ctx.get("wall_time", "?"),
+                "family_start_time": ctx.get("family_start", "?"),
+                "family_deadline_time": ctx.get("family_deadline", "?"),
+                "stay_until_time": ctx.get("stay_until", "?"),
+                "action_type": ctx.get("action_type", "?"),
+                "action_duration_minutes": ctx.get("action_duration", 0),
+                "finish_wall_time": ctx.get("finish_time", "?"),
+                "finish_to_pickup_km": ctx.get("end_to_pickup_km", 0),
+                "finish_to_pickup_minutes": ctx.get("end_to_pickup_min", 0),
+                "time_to_family_start": ctx.get("time_to_start", 0),
+                "time_to_deadline": ctx.get("time_to_deadline", 0),
+                "instruction": (
+                    "如果行动结束时间 + 前往接人点路程 >= 家事开始时间 - 60 分钟，safe=false 且 risk=high。"
+                    "如果行动在家庭截止时间（home_deadline）之后才结束，risk=high。"
+                    "如果当前已在家事窗口内（开始时间 ~ 结束时间），safe=false 且 risk=high。"
+                    "其他情况 safe=true 且 risk=low。"
+                ),
+            },
+        }
+
+    # ------------------------------------------------------------------
     # 辅助
     # ------------------------------------------------------------------
     @staticmethod
