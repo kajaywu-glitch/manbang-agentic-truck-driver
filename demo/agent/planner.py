@@ -779,7 +779,7 @@ class DeterministicPlanner:
         base_net = price - travel_cost
         total_minutes = max(1, finish - now_minute)
         net_per_hour = base_net / (total_minutes / 60.0)
-        score = base_net + 0.5 * net_per_hour - pickup_km * 0.35 - wait_minutes * 0.08
+        score = base_net + 0.6 * net_per_hour - pickup_km * 0.35 - wait_minutes * 0.08
 
         # Rest compatibility incentive: when rest is needed, strongly prefer
         # cargos that finish early with ample rest margin.
