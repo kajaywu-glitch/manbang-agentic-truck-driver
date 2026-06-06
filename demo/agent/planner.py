@@ -781,18 +781,21 @@ class DeterministicPlanner:
         net_per_hour = base_net / (total_minutes / 60.0)
         score = base_net + 0.5 * net_per_hour - pickup_km * 0.35 - wait_minutes * 0.08
 
-        # Rest compatibility bonus: when rest is needed, prefer cargos that
-        # finish early (leaving ample time for rest) over those that finish late.
+        # Rest compatibility incentive: when rest is needed, strongly prefer
+        # cargos that finish early with ample rest margin.
         if policy.daily_rest_minutes > 0 and needs_rest_today(policy, memory, now_minute) > 0:
             latest_rs = self._latest_rest_start(policy, now_minute)
             finish_mod = minute_of_day(finish)
             margin = latest_rs - finish_mod
-            if margin > 120:
-                # Cargo finishes with >2h margin before rest deadline — bonus
-                score += min(30, margin * 0.15)
-            elif margin < 60:
-                # Cargo finishes too close to rest deadline — penalty
-                score -= (60 - margin) * 0.2
+            if margin > 180:
+                # Cargo finishes >3h before rest deadline — strong bonus
+                score += min(50, margin * 0.2)
+            elif margin > 60:
+                # Moderate margin — mild bonus
+                score += margin * 0.1
+            else:
+                # Tight margin — penalty
+                score -= (60 - margin) * 0.3
 
         # Risk-Gated MPC: penalty_risk 估算 — 接单后是否还能满足硬约束
         penalty_risk = self._estimate_penalty_risk(
