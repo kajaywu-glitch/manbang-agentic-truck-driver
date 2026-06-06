@@ -658,7 +658,8 @@ class DeterministicPlanner:
         if truck_length and isinstance(truck_options, list) and truck_length not in {str(v) for v in truck_options}:
             return None
         cargo_name = str(cargo.get("cargo_name") or "").strip()
-        if cargo_name in policy.forbidden_cargo_names:
+        cargo_category = str(cargo.get("cargo_category", "") or "")
+        if cargo_name in policy.forbidden_cargo_names or cargo_category in policy.forbidden_cargo_names:
             return None
         start = cargo.get("start") if isinstance(cargo.get("start"), dict) else {}
         end = cargo.get("end") if isinstance(cargo.get("end"), dict) else {}
