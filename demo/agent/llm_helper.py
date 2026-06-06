@@ -60,7 +60,7 @@ class QwenFlashHelper:
         payload = {
             "model": QWEN_MODEL,
             "temperature": 0,
-            "max_tokens": 96,
+            "max_tokens": 64,
             "messages": [
                 {
                     "role": "system",
@@ -241,7 +241,7 @@ class QwenFlashHelper:
         payload = {
             "model": QWEN_MODEL,
             "temperature": 0,
-            "max_tokens": 96,
+            "max_tokens": 64,
             "messages": [
                 {
                     "role": "system",
