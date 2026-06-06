@@ -1,6 +1,6 @@
 # Claude/Codex 项目交接说明
 
-最后更新：2026-06-06 12:20 +08:00
+最后更新：2026-06-06 14:00 +08:00
 
 ## 🎯 终止目标达成状态
 
@@ -12,19 +12,21 @@
 | Qwen 场景 | ≥3 | **3**（rank/suggest/verify） | ✅ |
 | failed=0 | 必须 | **0** | ✅ |
 
-**自主迭代停止条件 #2 触发**：连续 5 个结构性假设均无法形成 Pareto 改善。
-罚分差距来自 D010 家事（3,570）+ D008/D002 休息（5,000），需根本性休息模型重构。
+**冠军 commit**：`a65a782`（Codex 审阅前版本）
+**Codex 审阅后版本**：per-driver 配额降低 Qwen 效果，净收入降至 ~151K，暂不采用。
+
+罚分差距来自 D010 家事（3,570）+ D008/D002 休息（5,000），**休息模型需要架构级重构而非参数调优**。
 
 ---
 
-本次更新：自主迭代循环结束，冠军版本稳定。qwen3.5-flash 全功能 + net_per_hour=0.5 + 休息风险折扣 + 增强 rank prompt。
+本次更新：7 次新增实验（休息债务、rest rejection buffer、Codex 配额调优）均未超越冠军。结论：当前架构下参数调优已达局部最优。
 
 ## 当前结论（截至 2026-06-06 12:20 +08:00）
 
 - 仓库：`D:\竞赛`
 - 当前分支：`deepseek/third-round-optimization`
 - 稳定分支：`main`
-- **冠军配置**：`AGENT_ENABLE_QWEN35_FLASH=1`, `AGENT_QWEN_MAX_REVIEWS=20`, 模型 `qwen3.5-flash`
+- **冠军配置**：`AGENT_ENABLE_QWEN35_FLASH=1`, `AGENT_QWEN_MAX_REVIEWS=25`, `AGENT_QWEN_MAX_RANKS=10`, `AGENT_QWEN_MAX_REVIEWS_PER_DRIVER=5`, 模型 `qwen3.5-flash`
 - **合并前审阅修正**：新增每司机 2 次、rank 总计 4 次的默认配额，并修正 Qwen 货源指标和风险校验上下文；等待 CC 下一轮完整仿真确认新成绩。
 
 ### 最终评测结果（全版本对比）
