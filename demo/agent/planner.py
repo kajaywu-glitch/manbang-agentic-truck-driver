@@ -365,8 +365,11 @@ class DeterministicPlanner:
             if mod < 12 * 60 and rest_minutes <= 240 and rest_remaining >= rest_minutes * 0.6:
                 return self._wait(max(60, min(rest_minutes, day_end(now_minute) - now_minute)))
 
-            # Phase 3: 下午被动触发 — 预触发上限 360 分钟，避免长休息过早开始
-            pre_trigger = min(max(240, rest_minutes), 360)
+            # Phase 3: 下午被动触发。长休息（>6h）不需要预触发，16:00 后自然开始即可
+            if rest_minutes <= 360:
+                pre_trigger = max(240, rest_minutes)
+            else:
+                pre_trigger = 0  # 8h rest: start at latest_start (16:00) naturally
 
             latest_start = self._latest_rest_start(policy, now_minute)
             mod = minute_of_day(now_minute)
