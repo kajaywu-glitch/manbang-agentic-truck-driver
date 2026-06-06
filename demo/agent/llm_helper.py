@@ -109,21 +109,32 @@ class QwenFlashHelper:
             cargo = c.get("cargo", {})
             start = cargo.get("start", {})
             end = cargo.get("end", {})
+            price = float(cargo.get("price", 0) or 0)
+            pickup = float(c.get("distance_km", 0) or 0)
+            haul = float(c.get("haul_distance_km", 0) or 0)
+            cost_time = int(cargo.get("cost_time_minutes", 0) or 0)
+            travel_cost = (pickup + haul) * 1.5
+            base_net = price - travel_cost
+            total_hours = max(0.02, (pickup * 1.0 + cost_time) / 60.0)
+            net_per_hour = base_net / total_hours
             cargo_summaries.append({
                 "cargo_id": str(cargo.get("cargo_id", "")),
                 "name": str(cargo.get("cargo_name", "")),
                 "category": str(cargo.get("cargo_category", "")),
-                "price_yuan": float(cargo.get("price", 0) or 0),
-                "pickup_km": float(c.get("distance_km", 0) or 0),
-                "haul_km": float(c.get("haul_distance_km", 0) or 0),
-                "cost_time_minutes": int(cargo.get("cost_time_minutes", 0) or 0),
+                "price_yuan": price,
+                "pickup_km": pickup,
+                "haul_km": haul,
+                "cost_time_minutes": cost_time,
+                "net_yuan": round(base_net, 0),
+                "net_per_hour": round(net_per_hour, 0),
                 "dest_city": str(end.get("city", "")),
             })
 
         prompt_data = {
             "task": (
                 "根据司机的约束条件，对候选货源进行综合评分（0-100）。"
-                "评分标准：高利润优先，但必须优先排除违反约束的货源。"
+                "评分标准：高时薪（net_per_hour）和高净利润（net_yuan）优先，"
+                "但必须优先排除违反约束（距离限制、禁运品类、休息需求）的货源。"
             ),
             "driver": {
                 "id": driver_id,
