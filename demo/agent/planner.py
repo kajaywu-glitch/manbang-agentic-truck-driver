@@ -318,15 +318,7 @@ class DeterministicPlanner:
             # Pre-trigger = max(4h, rest_minutes) + rest debt from yesterday.
             # If yesterday's longest rest was insufficient, increase urgency today
             # to prevent consecutive violations from accumulating.
-            rest_debt = 0
-            today = now_minute // DAY_MINUTES
-            if today > 0:
-                yesterday_rest = memory.longest_rest_for_day(today - 1)
-                yesterday_shortfall = max(0, rest_minutes - yesterday_rest)
-                if yesterday_shortfall > 0:
-                    # Mild debt: each 60min shortfall adds 20min to pre_trigger (1:3 ratio)
-                    rest_debt = min(rest_minutes // 2, yesterday_shortfall // 3)
-            pre_trigger = max(240, rest_minutes + rest_debt)
+            pre_trigger = max(240, rest_minutes)
 
             # Early-morning rest continuation: if the last action was a
             # substantial wait extending to or past midnight, keep resting
@@ -741,8 +733,8 @@ class DeterministicPlanner:
                 # 使用完整休息需求确保有足够时间完成一个完整休息块
                 if remaining_today < policy.daily_rest_minutes + 30:
                     return None
-                # 如果接单完成时间太晚（在休息开始时间之后），拒绝
-                if minute_of_day(effective_finish) >= latest_rest_start:
+                # 如果接单完成时间太晚（距休息截止不足 60 分钟缓冲），拒绝
+                if minute_of_day(effective_finish) >= latest_rest_start - 60:
                     return None
                 # 如果司机当前正在休息（最近一个动作是 wait 且已持续 >= 60 分钟），不打断
                 if memory.records:
