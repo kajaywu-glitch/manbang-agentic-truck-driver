@@ -472,11 +472,15 @@ def _parse_family_task(text: str, item: Any, policy: PreferencePolicy) -> None:
 
 def _parse_cargo_region_forbid(text: str, policy: PreferencePolicy) -> None:
     """装货地或卸货地在XX的货，我一律不接 / 起点或终点涉及XX"""
-    if "不接" not in text and "不往" not in text and "不进" not in text and "推掉" not in text and "不拉" not in text:
-        return  # Only forbid when text explicitly says NO
-    m = re.search(r"(?:装货地?或卸货地?在|起点或终点涉及)\s*([一-鿿]{2,8})(?:的货|的货源|，|。|一律|都|每)", text)
+    has_negative = any(w in text for w in ["不接", "不往", "不进", "推掉", "不拉", "不干", "一律不", "都扣", "每接一次都"])
+    if not has_negative:
+        return
+    m = re.search(r"(?:装货地?或卸货地?在|起点或终点涉及)\s*([一-鿿]{2,8})(?:的货|的货源)", text)
     if m:
-        policy.forbidden_cargo_regions.add(m.group(1))
+        city = m.group(1)
+        # Safety: don't add city if the text also describes it positively (required region)
+        if "得接够" not in text and "起码得" not in text and "至少" not in text.replace(city, ""):
+            policy.forbidden_cargo_regions.add(city)
 
 
 def _parse_time_limited_region_ban(text: str, item: Any, policy: PreferencePolicy) -> None:

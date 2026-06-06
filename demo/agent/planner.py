@@ -678,7 +678,6 @@ class DeterministicPlanner:
         if policy.forbidden_cargo_regions:
             if start_city in policy.forbidden_cargo_regions or end_city in policy.forbidden_cargo_regions:
                 return None
-        # 时间限定区域禁用检查
         for ban in policy.time_limited_region_bans:
             if ban.start_minute <= now_minute <= ban.end_minute:
                 if ban.city_keyword in start_city or ban.city_keyword in end_city:
