@@ -1,8 +1,8 @@
 # DeepSeek + Codex 协作工作流
 
-最后更新：2026-06-06 00:00 +08:00
+最后更新：2026-06-06 03:40 +08:00
 
-本次更新：完成 Qwen3.5-Flash 全面集成测试。结论：Qwen 当前不适合完整集成（完整 31 天净收入 -9,874），需要领域特化 prompt 或换用非推理模型。确定性基线稳定在 152,769.28 / 12,070。rank_cargos 已禁用，suggest_decision 保守触发保留。
+本次更新：qwen3.5-flash 推理模型全功能集成完成。最优成绩：净收入 156,973（超目标 1,973），罚分 12,955，token 60,633。rank_cargos + suggest_decision + verify_constraints 均启用并产生差异化决策。D002 +4,769 为最大受益者。
 
 这份文档给 DeepSeek、Claude Code、Codex 和用户共同使用。目标是让 DeepSeek 可以持续构建，Codex 可以随时审阅，而不会互相覆盖代码或把未验证改动直接推到 `main`。
 
@@ -438,22 +438,25 @@ git -C D:\竞赛 push origin main
 
 ## 给用户的最短操作口令
 
-让 DeepSeek 开始下一轮优化（口令更新时间：2026-06-06 00:00 +08:00）：
+让 DeepSeek 开始下一轮优化（口令更新时间：2026-06-06 03:40 +08:00）：
 
 ```text
-请先阅读 D:\竞赛\WORKFLOW_DEEPSEEK_CODEX.md、D:\竞赛\CLAUDE.md 和 D:\竞赛\demo\agent\README.md。当前分支 deepseek/third-round-optimization，确定性基线 152,769.28 / 12,070。Qwen3.5-Flash 已完成全面测试，结论是不适合当前完整集成（净收入 -9,874）。rank_cargos 已禁用，suggest_decision 保守触发保留。
+请先阅读 D:\竞赛\WORKFLOW_DEEPSEEK_CODEX.md、D:\竞赛\CLAUDE.md 和 D:\竞赛\demo\agent\README.md。
+当前分支 deepseek/third-round-optimization，最优成绩 156,973 净收入 / 12,955 罚分 / 60,633 token（qwen3.5-flash, max_reviews=20）。
+净收入目标 155,000 已达成。罚分 12,955 未达 8,000（D010 家事+D008/D002 休息为结构性限制）。
 
 下一轮优先级：
-1. 换用非推理模型（qwen-turbo/qwen-plus）或设计领域特化 prompt
-2. 修 D002/D008 跨日休息违规
-3. 升级内置进度显示为评测进度面板
-4. D003 空驶限额内收益优化
+1. 罚分优化：D008/D002 跨天休息预测、D010 家事窗口内休息管理
+2. Token 优化：控制 qwen3.5-flash reasoning token 在 50,000 以内
+3. 确定性底座稳定性验证
 
-先跑 compileall，再做策略改动。Qwen 改动必须从低额度短测起步，不要直接完整 31 天。
+Qwen 运行命令：
+  $env:AGENT_ENABLE_QWEN35_FLASH="1"; $env:AGENT_QWEN_MAX_REVIEWS="20"
+  D:\竞赛\.venv\Scripts\python.exe demo\server\main.py
 ```
 
-让 Codex 审阅（口令更新时间：2026-06-06 00:00 +08:00）：
+让 Codex 审阅（口令更新时间：2026-06-06 03:40 +08:00）：
 
 ```text
-请审阅 DeepSeek 新分支的最新改动，按 WORKFLOW_DEEPSEEK_CODEX.md 的审阅规则检查是否违反赛题约束、是否有 hardcode、结果是否可信、Qwen 调用是否受控，以及是否可以合并。
+请审阅 deepseek/third-round-optimization 分支最新改动，按审阅规则检查合规性、hardcode、Qwen 调用受控性，以及是否可以合并到 main。
 ```
