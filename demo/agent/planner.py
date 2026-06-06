@@ -731,7 +731,7 @@ class DeterministicPlanner:
                 effective_finish = finish + travel_home_after
                 remaining_today = day_end(now_minute) - effective_finish
                 # 确保 cargo 完成后有足够时间完成完整连续休息块（含 90min 缓冲）
-                if remaining_today < policy.daily_rest_minutes + 90:
+                if remaining_today < policy.daily_rest_minutes + 60:
                     return None
                 # 如果接单完成时间接近休息截止（30min 内），拒绝
                 if minute_of_day(effective_finish) >= latest_rest_start - 30:
