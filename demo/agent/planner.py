@@ -282,32 +282,28 @@ class DeterministicPlanner:
                 if travel_to_pickup + family.pickup_wait_minutes > time_remaining * 0.6:
                     return {"action": "reposition", "params": {"latitude": family.pickup_lat, "longitude": family.pickup_lng}}
 
-        # 约会任务：在指定时间窗口内必须到达指定位置并停留
+        # 约会任务：指定时间窗口内必须到达并停留
         for appt in policy.appointments:
             if appt.start_minute <= now_minute < appt.end_minute:
                 dist = haversine_km(lat, lng, appt.lat, appt.lng)
-                if dist > 5:
-                    if self._active_allowed(policy, now_minute, now_minute + distance_to_minutes(dist)):
-                        return {"action": "reposition", "params": {"latitude": appt.lat, "longitude": appt.lng}}
-                if memory.has_waited_at(appt.lat, appt.lng, 5.0, appt.start_minute, appt.duration_minutes):
-                    continue  # Done — already completed the stay
-                return self._wait(appt.duration_minutes)
-            # 约会前 6 小时：向目标方向移动
-            if now_minute < appt.start_minute and now_minute >= appt.start_minute - 6 * 60:
+                if dist > 5 and self._active_allowed(policy, now_minute, now_minute + distance_to_minutes(dist)):
+                    return {"action": "reposition", "params": {"latitude": appt.lat, "longitude": appt.lng}}
+                if not memory.has_waited_at(appt.lat, appt.lng, 5.0, appt.start_minute, appt.duration_minutes):
+                    return self._wait(appt.duration_minutes)
+            if now_minute >= appt.start_minute - 6 * 60 and now_minute < appt.start_minute:
                 dist = haversine_km(lat, lng, appt.lat, appt.lng)
                 if dist > 80 and self._active_allowed(policy, now_minute, now_minute + distance_to_minutes(dist)):
                     return {"action": "reposition", "params": {"latitude": appt.lat, "longitude": appt.lng}}
 
-        # 路线序列：按顺序执行 waypoints
+        # 路线序列：截止前赶往 waypoint
         for seq in policy.route_sequences:
             for wp_lat, wp_lng, _label, deadline in seq.waypoints:
-                dist = haversine_km(lat, lng, wp_lat, wp_lng)
-                if dist > 5 and deadline is not None:
+                if deadline is not None:
+                    dist = haversine_km(lat, lng, wp_lat, wp_lng)
                     travel = distance_to_minutes(dist)
                     if now_minute + travel > deadline - 120:
                         if self._active_allowed(policy, now_minute, now_minute + travel):
                             return {"action": "reposition", "params": {"latitude": wp_lat, "longitude": wp_lng}}
-                # TODO: full route sequence with ordered waypoints and stay durations
 
         required_cargo = policy.required_cargo
         if required_cargo is not None and not memory.has_taken_cargo(required_cargo.cargo_id):
@@ -365,11 +361,8 @@ class DeterministicPlanner:
             if mod < 12 * 60 and rest_minutes <= 240 and rest_remaining >= rest_minutes * 0.6:
                 return self._wait(max(60, min(rest_minutes, day_end(now_minute) - now_minute)))
 
-            # Phase 3: 下午被动触发。长休息（>6h）不需要预触发，16:00 后自然开始即可
-            if rest_minutes <= 360:
-                pre_trigger = max(240, rest_minutes)
-            else:
-                pre_trigger = 0  # 8h rest: start at latest_start (16:00) naturally
+            # Phase 3: 下午被动触发（原有逻辑）
+            pre_trigger = max(240, rest_minutes)
 
             latest_start = self._latest_rest_start(policy, now_minute)
             mod = minute_of_day(now_minute)
@@ -556,11 +549,6 @@ class DeterministicPlanner:
             if best is None or plan.score > best.score:
                 best = plan
 
-        if not evaluated_plans and items:
-            self._logger.info(
-                "all %d items rejected driver=%s now=%d", len(items), driver_id, now_minute,
-            )
-
         ranked_plans = sorted(evaluated_plans, key=lambda pair: pair[1].score, reverse=True)
         rank_gap = (
             self._score_gap_ratio(ranked_plans[0][1].score, ranked_plans[1][1].score)
@@ -672,17 +660,17 @@ class DeterministicPlanner:
         cargo_name = str(cargo.get("cargo_name") or "").strip()
         if cargo_name in policy.forbidden_cargo_names:
             return None
-        # 城市/区域禁运检查
-        start_city = str(start.get("city", "") or "")
-        end_city = str(end.get("city", "") or "")
-        if policy.forbidden_cargo_regions:
-            if start_city in policy.forbidden_cargo_regions or end_city in policy.forbidden_cargo_regions:
-                return None
+        start = cargo.get("start") if isinstance(cargo.get("start"), dict) else {}
+        end = cargo.get("end") if isinstance(cargo.get("end"), dict) else {}
+        # 城市/区域禁运
+        sc = str(start.get("city", "") or "")
+        ec = str(end.get("city", "") or "")
+        if policy.forbidden_cargo_regions and (sc in policy.forbidden_cargo_regions or ec in policy.forbidden_cargo_regions):
+            return None
         for ban in policy.time_limited_region_bans:
             if ban.start_minute <= now_minute <= ban.end_minute:
-                if ban.city_keyword in start_city or ban.city_keyword in end_city:
+                if ban.city_keyword in sc or ban.city_keyword in ec:
                     return None
-        start = cargo.get("start") if isinstance(cargo.get("start"), dict) else {}
         end = cargo.get("end") if isinstance(cargo.get("end"), dict) else {}
         try:
             start_lat = float(start["lat"])
@@ -703,10 +691,7 @@ class DeterministicPlanner:
         pickup_km = float(item.get("distance_km") or haversine_km(current_lat, current_lng, start_lat, start_lng))
         haul_km = haversine_km(start_lat, start_lng, end_lat, end_lng)
         if policy.max_pickup_km is not None and pickup_km > policy.max_pickup_km:
-            if pickup_km <= policy.max_pickup_km * 1.3:
-                score_penalty -= (pickup_km - policy.max_pickup_km) * 2  # Soft penalty for slight over-limit
-            else:
-                return None
+            return None
         if policy.max_haul_km is not None and haul_km > policy.max_haul_km:
             return None
         if policy.max_month_deadhead_km is not None and memory.deadhead_km + pickup_km > policy.max_month_deadhead_km:
@@ -977,7 +962,7 @@ class DeterministicPlanner:
             # 休息紧迫度：使用安静窗口开始时间（如果有）来计算最晚休息开始
             latest_start = self._latest_rest_start(policy, now_minute)
             urgency = max(0, minute_of_day(now_minute) - latest_start + 60)
-            rest_score = 400.0 + rest_remaining * 0.5 + urgency * 0.4
+            rest_score = 600.0 + rest_remaining * 0.5 + urgency * 0.4
             # 更积极地触发休息：提前4小时，或没有好订单时提前3小时
             has_good_cargo = best_cargo is not None and best_cargo.score > 100
             if minute_of_day(now_minute) >= latest_start - 240 or (not has_good_cargo and rest_remaining > 60):
