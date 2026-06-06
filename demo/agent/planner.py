@@ -665,8 +665,9 @@ class DeterministicPlanner:
         # 城市/区域禁运
         sc = str(start.get("city", "") or "")
         ec = str(end.get("city", "") or "")
-        if policy.forbidden_cargo_regions and (sc in policy.forbidden_cargo_regions or ec in policy.forbidden_cargo_regions):
-            return None
+        for region in policy.forbidden_cargo_regions:
+            if region in sc or region in ec:
+                return None
         for ban in policy.time_limited_region_bans:
             if ban.start_minute <= now_minute <= ban.end_minute:
                 if ban.city_keyword in sc or ban.city_keyword in ec:
