@@ -324,8 +324,8 @@ class DeterministicPlanner:
                 yesterday_rest = memory.longest_rest_for_day(today - 1)
                 yesterday_shortfall = max(0, rest_minutes - yesterday_rest)
                 if yesterday_shortfall > 0:
-                    # Each 30min of yesterday's shortfall adds 30min to pre_trigger
-                    rest_debt = min(rest_minutes, yesterday_shortfall)
+                    # Mild debt: each 60min shortfall adds 20min to pre_trigger (1:3 ratio)
+                    rest_debt = min(rest_minutes // 2, yesterday_shortfall // 3)
             pre_trigger = max(240, rest_minutes + rest_debt)
 
             # Early-morning rest continuation: if the last action was a
