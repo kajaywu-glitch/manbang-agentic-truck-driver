@@ -315,8 +315,18 @@ class DeterministicPlanner:
         rest_remaining = needs_rest_today(policy, memory, now_minute)
         if rest_remaining > 0:
             rest_minutes = int(policy.daily_rest_minutes or 0)
-            # Pre-trigger = max(4h, rest_minutes) — proportional to rest need
-            pre_trigger = max(240, rest_minutes)
+            # Pre-trigger = max(4h, rest_minutes) + rest debt from yesterday.
+            # If yesterday's longest rest was insufficient, increase urgency today
+            # to prevent consecutive violations from accumulating.
+            rest_debt = 0
+            today = now_minute // DAY_MINUTES
+            if today > 0:
+                yesterday_rest = memory.longest_rest_for_day(today - 1)
+                yesterday_shortfall = max(0, rest_minutes - yesterday_rest)
+                if yesterday_shortfall > 0:
+                    # Each 30min of yesterday's shortfall adds 30min to pre_trigger
+                    rest_debt = min(rest_minutes, yesterday_shortfall)
+            pre_trigger = max(240, rest_minutes + rest_debt)
 
             # Early-morning rest continuation: if the last action was a
             # substantial wait extending to or past midnight, keep resting
