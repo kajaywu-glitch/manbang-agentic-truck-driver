@@ -75,7 +75,7 @@ class DeterministicPlanner:
         self._logger = logging.getLogger("agent.planner")
         self._qwen = QwenFlashHelper(api)
         self._qwen_review_count = 0
-        self._qwen_max_reviews = int(os.environ.get("AGENT_QWEN_MAX_REVIEWS", "25"))
+        self._qwen_max_reviews = int(os.environ.get("AGENT_QWEN_MAX_REVIEWS", "20"))
         self._qwen_last_rank_step = -999
         self._qwen_last_suggest_step = -999
         self._step_counter = 0
@@ -735,6 +735,16 @@ class DeterministicPlanner:
         total_minutes = max(1, finish - now_minute)
         net_per_hour = base_net / (total_minutes / 60.0)
         score = base_net + 0.5 * net_per_hour - pickup_km * 0.35 - wait_minutes * 0.08
+
+        # Rest risk discount: when rest is needed, deprioritize cargos that
+        # finish close to latest_rest_start (they risk fragmenting rest).
+        if policy.daily_rest_minutes > 0 and needs_rest_today(policy, memory, now_minute) > 0:
+            latest_rs = self._latest_rest_start(policy, now_minute)
+            finish_mod = minute_of_day(finish)
+            if finish_mod >= latest_rs - 120:
+                # Cargo finishes within 2h of latest rest start — apply risk discount
+                rest_risk = (finish_mod - (latest_rs - 120)) * 0.3
+                score -= rest_risk
 
         # Risk-Gated MPC: penalty_risk 估算 — 接单后是否还能满足硬约束
         penalty_risk = self._estimate_penalty_risk(
