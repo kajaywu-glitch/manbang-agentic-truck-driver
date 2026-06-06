@@ -265,7 +265,12 @@ def should_preserve_off_day(policy: PreferencePolicy, memory: DriverMemory, now_
     done = memory.completed_off_days(now_minute)
     if done >= needed:
         return False
-    return memory.active_minutes_today(now_minute) == 0
+    if memory.active_minutes_today(now_minute) > 0:
+        return False
+    # Only force off-day when remaining days are tight
+    still_needed = needed - done
+    days_remaining = MONTH_HORIZON_MINUTES // DAY_MINUTES - (now_minute // DAY_MINUTES)
+    return days_remaining <= still_needed
 
 
 def should_preserve_no_order_day(policy: PreferencePolicy, memory: DriverMemory, now_minute: int) -> bool:
