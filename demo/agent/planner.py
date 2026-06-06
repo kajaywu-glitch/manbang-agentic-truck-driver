@@ -318,9 +318,7 @@ class DeterministicPlanner:
                 if dist > visit.radius_km and dist <= 120 and self._active_allowed(policy, now_minute, now_minute + distance_to_minutes(dist)):
                     return {"action": "reposition", "params": {"latitude": visit.lat, "longitude": visit.lng}}
 
-        # === P1: 机会成本感知休息调度 ===
-        # 移除静态上午休息；只保留清晨延续、下午预触发和硬截止。
-        # 货源级休息可行性检查在 _evaluate_cargo 中完成。
+        # 连续休息前移：清晨延续 + 上午主动休息（≤4h）+ 下午预触发 + 硬截止
         rest_remaining = needs_rest_today(policy, memory, now_minute)
         if rest_remaining > 0:
             rest_minutes = int(policy.daily_rest_minutes or 0)
@@ -333,19 +331,22 @@ class DeterministicPlanner:
                     if abs(last.step_end - now_minute) <= 10:
                         return self._wait(max(60, min(rest_minutes, day_end(now_minute) - now_minute)))
 
-            # Phase 2: 下午被动触发（原有逻辑）
+            # Phase 2: 上午主动休息 — 短休息需求（≤4h）在前半天完成
+            if mod < 12 * 60 and rest_minutes <= 240 and rest_remaining >= rest_minutes * 0.6:
+                return self._wait(max(60, min(rest_minutes, day_end(now_minute) - now_minute)))
+
+            # Phase 3: 下午被动触发
             pre_trigger = max(240, rest_minutes)
             latest_start = self._latest_rest_start(policy, now_minute)
             if mod >= latest_start - pre_trigger:
                 duration = max(60, min(policy.daily_rest_minutes, day_end(now_minute) - now_minute))
                 return self._wait(duration)
 
-            # Phase 3: 硬截止 — 当天剩余时间不足，立即休息
+            # Phase 4: 硬截止
             today_remain = max(0, day_end(now_minute) - now_minute)
             if today_remain <= rest_minutes + 30 and rest_remaining >= rest_minutes * 0.5:
                 return self._wait(max(60, min(policy.daily_rest_minutes, today_remain)))
 
-            # 如果当前正在休息中，不打断
             if memory.records:
                 last = memory.records[-1]
                 if last.action_name == "wait" and last.action_exec_cost >= 60:
@@ -780,18 +781,17 @@ class DeterministicPlanner:
         net_per_hour = base_net / (total_minutes / 60.0)
         score = base_net + 0.6 * net_per_hour - pickup_km * 0.35 - wait_minutes * 0.08
 
-        # P1: 机会成本感知休息可行性 — 对每个货源投影完工后能否完成连续休息。
-        # 若不能且预计罚分超过货源净收益 50%，拒绝货源（休息更划算）。
-        if policy.daily_rest_minutes > 0 and not is_required_cargo:
-            rest_needed = needs_rest_today(policy, memory, now_minute)
-            if rest_needed > 0:
-                rest_feasible, rest_penalty_est = self._rest_feasibility(
-                    policy, now_minute, finish, rest_needed,
-                )
-                if not rest_feasible and rest_penalty_est > base_net * 0.3:
-                    return None
-                if not rest_feasible:
-                    score -= rest_penalty_est * 0.3
+        # Rest compatibility incentive: prefer cargos that finish early
+        if policy.daily_rest_minutes > 0 and needs_rest_today(policy, memory, now_minute) > 0:
+            latest_rs = self._latest_rest_start(policy, now_minute)
+            finish_mod = minute_of_day(finish)
+            margin = latest_rs - finish_mod
+            if margin > 180:
+                score += min(50, margin * 0.2)
+            elif margin > 60:
+                score += margin * 0.1
+            else:
+                score -= (60 - margin) * 0.3
 
         # Risk-Gated MPC: penalty_risk 估算 — 接单后是否还能满足硬约束
         penalty_risk = self._estimate_penalty_risk(
