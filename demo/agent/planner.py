@@ -282,6 +282,33 @@ class DeterministicPlanner:
                 if travel_to_pickup + family.pickup_wait_minutes > time_remaining * 0.6:
                     return {"action": "reposition", "params": {"latitude": family.pickup_lat, "longitude": family.pickup_lng}}
 
+        # 约会任务：在指定时间窗口内必须到达指定位置并停留
+        for appt in policy.appointments:
+            if appt.start_minute <= now_minute < appt.end_minute:
+                dist = haversine_km(lat, lng, appt.lat, appt.lng)
+                if dist > 5:
+                    if self._active_allowed(policy, now_minute, now_minute + distance_to_minutes(dist)):
+                        return {"action": "reposition", "params": {"latitude": appt.lat, "longitude": appt.lng}}
+                if memory.has_waited_at(appt.lat, appt.lng, 5.0, appt.start_minute, appt.duration_minutes):
+                    continue  # Done — already completed the stay
+                return self._wait(appt.duration_minutes)
+            # 约会前 6 小时：向目标方向移动
+            if now_minute < appt.start_minute and now_minute >= appt.start_minute - 6 * 60:
+                dist = haversine_km(lat, lng, appt.lat, appt.lng)
+                if dist > 80 and self._active_allowed(policy, now_minute, now_minute + distance_to_minutes(dist)):
+                    return {"action": "reposition", "params": {"latitude": appt.lat, "longitude": appt.lng}}
+
+        # 路线序列：按顺序执行 waypoints
+        for seq in policy.route_sequences:
+            for wp_lat, wp_lng, _label, deadline in seq.waypoints:
+                dist = haversine_km(lat, lng, wp_lat, wp_lng)
+                if dist > 5 and deadline is not None:
+                    travel = distance_to_minutes(dist)
+                    if now_minute + travel > deadline - 120:
+                        if self._active_allowed(policy, now_minute, now_minute + travel):
+                            return {"action": "reposition", "params": {"latitude": wp_lat, "longitude": wp_lng}}
+                # TODO: full route sequence with ordered waypoints and stay durations
+
         required_cargo = policy.required_cargo
         if required_cargo is not None and not memory.has_taken_cargo(required_cargo.cargo_id):
             action = self._required_cargo_positioning(required_cargo, now_minute, lat, lng, policy)
@@ -338,8 +365,8 @@ class DeterministicPlanner:
             if mod < 12 * 60 and rest_minutes <= 240 and rest_remaining >= rest_minutes * 0.6:
                 return self._wait(max(60, min(rest_minutes, day_end(now_minute) - now_minute)))
 
-            # Phase 3: 下午被动触发（原有逻辑）
-            pre_trigger = max(240, rest_minutes)
+            # Phase 3: 下午被动触发 — 预触发上限 360 分钟，避免长休息过早开始
+            pre_trigger = min(max(240, rest_minutes), 360)
 
             latest_start = self._latest_rest_start(policy, now_minute)
             mod = minute_of_day(now_minute)
