@@ -322,15 +322,18 @@ def _preference_text(item: Any) -> str:
 
 
 def _parse_cargo_names(text: str, policy: PreferencePolicy) -> None:
-    if "货源品类" not in text:
-        return
+    # Bracketed: 「机械设备」
     names = set(re.findall(r"「([^」]+)」", text))
-    if not names:
+    if names:
+        if "不接" in text or "不拉" in text or "不干" in text or "推掉" in text:
+            policy.forbidden_cargo_names.update(names)
+        elif "尽量不拉" in text or "尽量不接" in text:
+            policy.soft_avoid_cargo_names.update(names)
         return
-    if "不接" in text:
-        policy.forbidden_cargo_names.update(names)
-    elif "尽量不拉" in text or "尽量不接" in text:
-        policy.soft_avoid_cargo_names.update(names)
+    # Unbracketed: "XX货源我一律推掉" / "XX这类活儿我干不了"
+    m = re.search(r"([一-鿿]{2,6})(?:货源|这类活儿|这类货|这一类)", text)
+    if m and any(w in text for w in ("不接", "不拉", "不干", "推掉", "干不了", "搞不了", "一律推", "每接一次都扣", "凡是")):
+        policy.forbidden_cargo_names.add(m.group(1))
 
 
 def _parse_rest(text: str, policy: PreferencePolicy) -> None:
