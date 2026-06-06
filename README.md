@@ -1,8 +1,8 @@
 # 满帮 Agent 算法大赛项目
 
-最后更新：2026-05-29 19:42 +08:00
+最后更新：2026-06-07 00:25 +08:00
 
-本次更新：同步 `deepseek/risk-gated-mpc` 审查修正与合并状态，说明已加入 Risk-Gated MPC、仿真进度 heartbeat、Qwen 输出限长和调用收紧；下一轮重点是完整 31 天确定性基线、真实 Qwen 小上限短测、以及“当前跑到第几天/完成几个司机/阶段结果”的评测进度显示。
+本次更新：已接入官方 `demo_docs_release_20260529.zip`。新版只公开 D001/D002，正式评测包含未公开 D003/D004；旧数据集成绩不再代表当前基线。最终路线改为运行时偏好编译、通用约束日程和罚款感知收益优化，详见 `最终冲刺与泛化方案.md`。
 
 本仓库用于「基于 Agentic AI 的卡车司机连续找货决策」赛题的本地开发、设计沉淀与后续审阅。
 
@@ -10,11 +10,13 @@
 
 - `CLAUDE.md`：Claude Code/Codex 使用的本地环境与运行命令说明。
 - `项目总设计方向.md`：交给实现模型的总体设计与算法路线。
+- `最终冲刺与泛化方案.md`：新数据集下保持高分与隐藏司机泛化的最终方案。
 - `docs/`：官方赛题说明、数据说明、评测规则、提交方式与快速开始。
 - `demo/`：官方离线仿真工程，后续主要修改 `demo/agent/`。
 - `demo/server/data/`：已解压的公开数据，供本地仿真使用；决策代码运行时禁止直读。
 - `standord_mus_tread/`：原始要求截图。
-- `demo_docs_release_20260509.zip`：官方公开数据与 demo 压缩包原件。
+- `demo_docs_release_20260509.zip`：旧版官方包，仅作历史参考。
+- `demo_docs_release_20260529.zip`：当前官方公开数据与 Demo 原件。
 
 ## 开发原则
 
@@ -22,8 +24,8 @@ Agent 决策代码必须通过 `SimulationApiPort` 获取状态、货源与历�
 
 真实 API key 只放在本机 `D:\竞赛\.env.local`，该文件已被 Git 忽略；运行模型验证前用 `.\scripts\load_local_env.ps1` 注入当前 PowerShell 进程。不要把真实 key、`.env.local` 或含 key 的截图推送到 GitHub。
 
-## 当前状态（截至 2026-05-29 19:42 +08:00）
+## 当前状态（截至 2026-06-07 00:25 +08:00）
 
-截至 2026-05-29 19:42 +08:00，当前稳定主线为 `main`，本次合并包含 `deepseek/risk-gated-mpc`：D010 家事逻辑仍保持运行时 `preferences` 解析；新增 Risk-Gated MPC、`AGENT_PROGRESS_STDERR` heartbeat、Qwen 候选触发收紧，并经 Codex 审查补充了 `max_tokens` 限制、rank 候选数 5、默认 `AGENT_QWEN_MAX_REVIEWS=20` 和家事 deadline 修正。已通过 `compileall` 和关闭 Qwen 的 `--max-steps 50`。
+当前 `main` 已同步 2026-05-29 官方服务端和评测框架。公开数据为 500,000 条货源、31 个品类，`query_cargo(k)` 上限为 600。现有 Agent 对新版口语化偏好的解析覆盖不足，D002 的 7 条规则当前全部漏识别，因此不得直接在旧策略上调权重。
 
-Agent 已实现确定性滚动规划，并已接入 `qwen3.5-flash` 的偏好增强、货源评分与候选复审接口；默认不开模型，开启需设置 `AGENT_ENABLE_QWEN35_FLASH=1`。下一步优先重跑合并后的 31 天确定性基线，然后用真实 key 做小上限 Qwen 短测，确认 token 和耗时可控。下一位模型请优先阅读 `WORKFLOW_DEEPSEEK_CODEX.md`、`CLAUDE.md` 和 `demo/agent/README.md`。
+下一位模型应先阅读 `最终冲刺与泛化方案.md` 和 `.claude/read.txt`，一次性完成通用偏好编译器、约束日程器、自适应查询和新版完整评测。
