@@ -733,8 +733,8 @@ class DeterministicPlanner:
                 # 使用完整休息需求确保有足够时间完成一个完整休息块
                 if remaining_today < policy.daily_rest_minutes + 30:
                     return None
-                # 如果接单完成时间太晚（距休息截止不足 60 分钟缓冲），拒绝
-                if minute_of_day(effective_finish) >= latest_rest_start - 60:
+                # 如果接单完成时间太晚（在休息开始时间之后），拒绝
+                if minute_of_day(effective_finish) >= latest_rest_start:
                     return None
                 # 如果司机当前正在休息（最近一个动作是 wait 且已持续 >= 60 分钟），不打断
                 if memory.records:
