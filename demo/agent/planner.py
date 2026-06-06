@@ -556,6 +556,11 @@ class DeterministicPlanner:
             if best is None or plan.score > best.score:
                 best = plan
 
+        if not evaluated_plans and items:
+            self._logger.info(
+                "all %d items rejected driver=%s now=%d", len(items), driver_id, now_minute,
+            )
+
         ranked_plans = sorted(evaluated_plans, key=lambda pair: pair[1].score, reverse=True)
         rank_gap = (
             self._score_gap_ratio(ranked_plans[0][1].score, ranked_plans[1][1].score)
@@ -699,7 +704,10 @@ class DeterministicPlanner:
         pickup_km = float(item.get("distance_km") or haversine_km(current_lat, current_lng, start_lat, start_lng))
         haul_km = haversine_km(start_lat, start_lng, end_lat, end_lng)
         if policy.max_pickup_km is not None and pickup_km > policy.max_pickup_km:
-            return None
+            if pickup_km <= policy.max_pickup_km * 1.3:
+                score_penalty -= (pickup_km - policy.max_pickup_km) * 2  # Soft penalty for slight over-limit
+            else:
+                return None
         if policy.max_haul_km is not None and haul_km > policy.max_haul_km:
             return None
         if policy.max_month_deadhead_km is not None and memory.deadhead_km + pickup_km > policy.max_month_deadhead_km:
@@ -970,7 +978,7 @@ class DeterministicPlanner:
             # 休息紧迫度：使用安静窗口开始时间（如果有）来计算最晚休息开始
             latest_start = self._latest_rest_start(policy, now_minute)
             urgency = max(0, minute_of_day(now_minute) - latest_start + 60)
-            rest_score = 600.0 + rest_remaining * 0.5 + urgency * 0.4
+            rest_score = 400.0 + rest_remaining * 0.5 + urgency * 0.4
             # 更积极地触发休息：提前4小时，或没有好订单时提前3小时
             has_good_cargo = best_cargo is not None and best_cargo.score > 100
             if minute_of_day(now_minute) >= latest_start - 240 or (not has_good_cargo and rest_remaining > 60):
