@@ -1,8 +1,8 @@
 # DeepSeek + Codex 协作工作流
 
-最后更新：2026-06-06 17:40 +08:00
+最后更新：2026-06-06 22:00 +08:00
 
-本次更新：上午主动休息 + 净收入恢复 + token 压缩。新冠军：净收入 154,297 / 罚分 **8,355** / token **52,976**。三项指标均向目标收敛。net_per_hour=0.6，max_tokens 平衡配置。
+本次更新：当前低罚分基线为净收入 154,297 / 罚分 **8,355** / Token **52,976**。Codex 审阅确认 D009 异常已消失，并默认关闭 10/10 截断失败的 `preference_hints` 调用，等待 CC 确认 Token 是否低于 50,000。
 
 这份文档给 DeepSeek、Claude Code、Codex 和用户共同使用。目标是让 DeepSeek 可以持续构建，Codex 可以随时审阅，而不会互相覆盖代码或把未验证改动直接推到 `main`。
 
@@ -438,26 +438,26 @@ git -C D:\竞赛 push origin main
 
 ## 给用户的最短操作口令
 
-让 DeepSeek 开始下一轮优化（口令更新时间：2026-06-06 18:00 +08:00）：
+让 DeepSeek 开始下一轮优化（口令更新时间：2026-06-06 22:00 +08:00）：
 
 ```text
 请先阅读 D:\竞赛\WORKFLOW_DEEPSEEK_CODEX.md、D:\竞赛\CLAUDE.md 和 D:\竞赛\demo\agent\README.md。
-当前低罚分候选成绩为 153,541 净收入 / 8,355 罚分 / 64,567 token；旧净收入冠军为 156,973 / 12,955 / 46,149，两者互不支配。
+当前低罚分基线为 154,297 净收入 / 8,355 罚分 / 52,976 token；旧净收入冠军为 156,973 / 12,955 / 46,149，两者互不支配。
 终极目标为净收入至少 160,000、罚分不高于 8,000、token 低于 50,000、failed=0。
-Codex 已修复日志中 D009 的 HomeNightRule 属性异常。不要重复旧实验，直接基于最新 main 继续。
+Codex 已确认 D009 的 HomeNightRule 属性异常不再出现，并默认关闭 10/10 截断失败的 preference_hints。先验证该修正后的 Token，不要重复调整 max_tokens。
 
 下一轮优先级：
 1. 建立统一的跨日休息可行性投影，优先解决 D006，再降低 D002/D008/D010 违规天数
 2. 把上午主动休息改成机会成本感知调度，只在预计罚分收益大于放弃订单收益时触发
-3. 将 Qwen 风险复核改为按预期罚分收益分配预算，目标 Token <50,000
+3. 确认关闭无效 preference_hints 后 Token <50,000，再将 Qwen 风险复核改为按预期罚分收益分配预算
 4. 保留 156,973 净收入版本和 8,355 罚分版本作为双基线，只接受 Pareto 改善
 
 Qwen 运行命令：
-  $env:AGENT_ENABLE_QWEN35_FLASH="1"; $env:AGENT_QWEN_MAX_REVIEWS="15"; $env:AGENT_QWEN_MAX_REVIEWS_PER_DRIVER="5"; $env:AGENT_QWEN_MAX_RANKS="5"
+  $env:AGENT_ENABLE_QWEN35_FLASH="1"; $env:AGENT_QWEN_MAX_REVIEWS="15"; $env:AGENT_QWEN_MAX_REVIEWS_PER_DRIVER="5"; $env:AGENT_QWEN_MAX_RANKS="5"; $env:AGENT_ENABLE_QWEN_PREFERENCE_HINTS="0"
   D:\竞赛\.venv\Scripts\python.exe demo\server\main.py
 ```
 
-让 Codex 审阅（口令更新时间：2026-06-06 18:00 +08:00）：
+让 Codex 审阅（口令更新时间：2026-06-06 22:00 +08:00）：
 
 ```text
 请审阅 deepseek/third-round-optimization 分支最新改动，按审阅规则检查合规性、hardcode、Qwen 调用受控性，以及是否可以合并到 main。

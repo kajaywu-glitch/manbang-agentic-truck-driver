@@ -76,6 +76,10 @@ class DeterministicPlanner:
         self._api = api
         self._logger = logging.getLogger("agent.planner")
         self._qwen = QwenFlashHelper(api)
+        self._qwen_preference_hints_enabled = (
+            os.environ.get("AGENT_ENABLE_QWEN_PREFERENCE_HINTS", "0").strip().lower()
+            in {"1", "true", "yes", "on"}
+        )
         self._qwen_review_count = 0
         self._qwen_review_counts_by_driver: dict[str, int] = {}
         self._qwen_max_reviews = max(0, int(os.environ.get("AGENT_QWEN_MAX_REVIEWS", "15")))
@@ -98,8 +102,12 @@ class DeterministicPlanner:
         prefs_raw = list(status.get("preferences") or [])
         policy = parse_preferences(prefs_raw)
 
-        # Qwen hints 只在没有未完成的 required_cargo 时应用，避免改变行为导致错过熟货
-        if policy.required_cargo is None or memory.has_taken_cargo(policy.required_cargo.cargo_id):
+        # Preference hints are experimental. The accepted run truncated every
+        # response, so keep this cost disabled unless explicitly requested.
+        if self._qwen_preference_hints_enabled and (
+            policy.required_cargo is None
+            or memory.has_taken_cargo(policy.required_cargo.cargo_id)
+        ):
             qwen_hints = self._qwen.preference_hints(list(status.get("preferences") or []))
             if qwen_hints:
                 policy = apply_qwen_hints(policy, qwen_hints)

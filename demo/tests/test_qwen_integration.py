@@ -24,6 +24,12 @@ class FakeApi:
 
 
 class QwenIntegrationTests(unittest.TestCase):
+    def test_preference_hints_are_opt_in(self) -> None:
+        with patch.dict(os.environ, {"AGENT_ENABLE_QWEN_PREFERENCE_HINTS": "0"}):
+            self.assertFalse(DeterministicPlanner(FakeApi())._qwen_preference_hints_enabled)
+        with patch.dict(os.environ, {"AGENT_ENABLE_QWEN_PREFERENCE_HINTS": "1"}):
+            self.assertTrue(DeterministicPlanner(FakeApi())._qwen_preference_hints_enabled)
+
     def test_cargo_enrichment_uses_evaluated_plan_metrics(self) -> None:
         plan = CargoPlan(
             cargo_id="C1",

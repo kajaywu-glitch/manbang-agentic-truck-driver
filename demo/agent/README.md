@@ -22,12 +22,12 @@
    - `verify_constraints`：home_night/rest/family 安全审核
 3. 安全底线：模型失败时完全回退确定性逻辑。
 
-### Qwen 集成架构（低罚分版本已验证，异常修正待 CC 下一轮确认）
+### Qwen 集成架构（低罚分版本已验证）
 
 - **模型**：`qwen3.5-flash`（推理模型，启用 reasoning）
-- **低罚分结果实际配置**：总复审 20、每司机最多 5 次、rank 总计最多 5 次
+- **已验证结果配置**：总复审 15、每司机最多 5 次、rank 总计最多 5 次
 - **当前代码默认配额**：总复审 15、每司机最多 5 次、rank 总计最多 5 次；同一步只允许一次模型调用，风险校验优先。
-- `preference_hints`：仅 `forbidden_cargo_names`（纯罚分改善，避免过度收紧）
+- `preference_hints`：实验功能，默认关闭；设置 `AGENT_ENABLE_QWEN_PREFERENCE_HINTS=1` 才启用。已验证运行中 10 次调用均因输出截断失败，未贡献决策。
 - `rank_cargos`：约束感知 prompt，top-3 货源评分
 - `suggest_decision`：隐藏 deterministic_score，基于约束上下文选优
 - `verify_constraints`：三种领域特化 prompt（home_night/rest/family）
@@ -36,7 +36,7 @@
 
 | 改动 | 影响 |
 |------|------|
-| `net_per_hour` 0.25→0.5 | +2,837 确定性净收入 |
+| `net_per_hour` 0.25→0.6 | 恢复低罚分版本的部分净收入 |
 | qwen3.5-flash 推理模型 | rank_cargos + suggest_decision 启用 |
 | 按比例休息预触发 `max(240, rest_minutes)` | D002 小幅改善 |
 
@@ -59,13 +59,13 @@
 
 **总计：净收入 156,973，罚分 12,955，token 46,149，耗时 431s**（旧冠军）
 
-### 低罚分候选（上午主动休息 + 休息兼容性奖励，2026-06-06 17:40）
+### 当前低罚分基线（2026-06-06 21:41）
 
 | 司机 | 净收入 | 罚分 |
 |------|------:|-----:|
-| D001-D010 | **153,541** | **8,355** |
+| D001-D010 | **154,297** | **8,355** |
 
-**罚分 -35.5%（12,955→8,355），距 8,000 目标仅差 355。净收入 153,541（-2.2% vs 旧冠军），Token 64,567（超过 50,000 目标）。**
+**罚分 -35.5%（12,955→8,355），距 8,000 目标仅差 355。净收入 154,297，Token 52,976。结果位于 `demo/results/history/20260606_214230`。**
 
 以下表格是早期 Qwen 方案的历史对照，不代表当前冠军版本：
 
@@ -80,8 +80,8 @@
 
 1. **连续休息仍是主要罚分源**：D002/D006/D008/D010 分别仍有 8/6/4/8 天违规，需要统一的跨日休息可行性模型。
 2. **D010 家事基本解决**：家事罚分已降至 155，但仍有 31 分钟不在家窗口，可继续压缩。
-3. **Qwen Token 超目标**：最新结果 64,567；模型调用集中在 D001/D006/D010 的风险复核，应按边际收益进一步收紧。
-4. **D009 home-night 校验异常已修复**：日志中的 `HomeNightRule.home_lat` 属性错误已改为正确的 `lat/lng`，等待下一轮结果确认。
+3. **Qwen Token 仍超目标**：已验证结果 52,976；默认关闭无效 preference hints 后需由 CC 确认是否低于 50,000。
+4. **D009 home-night 校验异常已修复并验证**：最新完整日志不再出现 `HomeNightRule` 属性错误。
 5. **market_heat 跨步记忆**：当前只在当前决策步内累积，不做跨步持久化。
 
 ## 启用 Qwen
@@ -93,12 +93,13 @@ $env:AGENT_ENABLE_QWEN35_FLASH = "1"
 $env:AGENT_QWEN_MAX_REVIEWS = "15"
 $env:AGENT_QWEN_MAX_REVIEWS_PER_DRIVER = "5"
 $env:AGENT_QWEN_MAX_RANKS = "5"
+$env:AGENT_ENABLE_QWEN_PREFERENCE_HINTS = "0"
 
 cd demo/server
 python main.py
 ```
 
-注意：153,541 / 8,355 是当前低罚分候选成绩；D009 异常修正后的结果由 CC 下一轮运行确认。
+注意：154,297 / 8,355 / 52,976 是关闭无效 preference hints 之前的已验证基线；下一轮重点确认 Token 是否降到 50,000 以下。
 
 ## 禁止事项
 
