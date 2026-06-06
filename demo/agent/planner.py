@@ -637,6 +637,17 @@ class DeterministicPlanner:
         cargo_name = str(cargo.get("cargo_name") or "").strip()
         if cargo_name in policy.forbidden_cargo_names:
             return None
+        # 城市/区域禁运检查
+        start_city = str(start.get("city", "") or "")
+        end_city = str(end.get("city", "") or "")
+        if policy.forbidden_cargo_regions:
+            if start_city in policy.forbidden_cargo_regions or end_city in policy.forbidden_cargo_regions:
+                return None
+        # 时间限定区域禁用检查
+        for ban in policy.time_limited_region_bans:
+            if ban.start_minute <= now_minute <= ban.end_minute:
+                if ban.city_keyword in start_city or ban.city_keyword in end_city:
+                    return None
         start = cargo.get("start") if isinstance(cargo.get("start"), dict) else {}
         end = cargo.get("end") if isinstance(cargo.get("end"), dict) else {}
         try:
