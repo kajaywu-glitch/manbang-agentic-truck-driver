@@ -1,33 +1,33 @@
 # Claude/Codex 项目交接说明
 
-最后更新：2026-06-06 22:00 +08:00
+最后更新：2026-06-06 23:05 +08:00
 
 ## 🎯 终止目标达成状态
 
-| 指标 | 终极目标 | **低罚分候选** | 状态 |
-|------|---------|------------:|------|
+| 指标 | 终极目标 | **当前基线** | 状态 |
+|------|---------|----------:|------|
 | 净收入 | ≥160,000 | **154,297** | ❌ 差 5,703 |
 | 罚分 | ≤8,000 | **8,355** | ⚠️ 差 355 |
-| Token | <50,000 | **25,374** | ✅ |
+| Token | <50,000 | **25,721** | ✅ |
 | Qwen 场景 | ≥3 | **3**（rank/suggest/verify） | ✅ |
 | failed=0 | 必须 | **0** | ✅ |
 
-**已验证低罚分基线**：`679676e`，结果位于 `demo/results/history/20260606_223614`。
-**P0 验证通过**：关闭无效 preference_hints 后 Token 25,374（-52%），净收入 154,297、罚分 8,355 不变。
-**P1 回退**：移除静态上午休息导致罚分 +5,000，已恢复。`_rest_feasibility` 方法保留待后续使用。
-**P2 实施中**：基于风险等级的 Qwen 预算预留跟踪，不改休息模型。
+**稳定基线 commit**：`679676e`（Codex 同步点 + P0 验证）
+**最新 commit**：`142dbd6`（P0+P2，P1 已回退）
+**已验证运行**：`demo/results/history/20260606_223614`（P0）和 `20260606_230445`（P2），连续三次净收入/罚分一致。
 
----
+### Codex 审阅后执行状态
 
-本次更新：`net_per_hour=0.6` 恢复部分净收入，Qwen 输出上限压缩 Token。审阅发现已验证运行中 10 次 `preference_hints` 全部因 JSON 截断失败，因此该实验路径改为默认关闭。
+| 阶段 | 状态 | 结果 |
+|------|------|------|
+| P0 关闭 preference_hints | ✅ | Token 52,976→25,374（-52%），行为不变 |
+| P1 机会成本休息调度 | ❌ 回退 | 动态门控罚分 +5,000；静态上午休息是罚分 8,355 关键 |
+| P2 Qwen 预算预留 | ✅ | 19 次调用，预留追踪正常，25,721 token |
 
-## 当前结论（截至 2026-06-06 22:00 +08:00）
+### 当前代码默认配置
 
-- 仓库：`D:\竞赛`
-- 当前分支：`deepseek/third-round-optimization`
-- 稳定分支：`main`
-- **已验证结果配置**：总复审 15、每司机最多 5 次、rank 最多 5 次，模型 `qwen3.5-flash`
-- **当前代码默认配置**：`AGENT_QWEN_MAX_REVIEWS=15`, `AGENT_QWEN_MAX_REVIEWS_PER_DRIVER=5`, `AGENT_QWEN_MAX_RANKS=5`
+`AGENT_QWEN_MAX_REVIEWS=15`, `AGENT_QWEN_MAX_REVIEWS_PER_DRIVER=5`, `AGENT_QWEN_MAX_RANKS=5`，模型 `qwen3.5-flash`。
+preference_hints 默认关闭（`AGENT_ENABLE_QWEN_PREFERENCE_HINTS=1` 时启用）。
 - **Codex 审阅结论**：D009 home-night 异常已在完整运行中确认不再出现；`preference_hints` 改为 `AGENT_ENABLE_QWEN_PREFERENCE_HINTS=1` 时才启用，默认关闭以消除无效 Token。
 
 ### 最终评测结果（全版本对比）
