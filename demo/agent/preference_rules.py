@@ -331,8 +331,8 @@ def _parse_cargo_names(text: str, policy: PreferencePolicy) -> None:
             policy.soft_avoid_cargo_names.update(names)
         return
     # Unbracketed: "XX货源我一律推掉" / "XX这类活儿我干不了"
-    m = re.search(r"([一-鿿]{2,6})(?:货源|这类活儿|这类货|这一类)", text)
-    if m and any(w in text for w in ("不接", "不拉", "不干", "推掉", "干不了", "搞不了", "一律推", "每接一次都扣", "凡是")):
+    m = re.search(r"([一-鿿]{2,4})(?:货源|这类活儿|这类货|这一类|的货|订单)", text)
+    if m and any(w in text for w in ("不接", "不拉", "不干", "推掉", "干不了", "搞不了", "一律推", "每接一次都扣", "凡是", "赔不起")):
         policy.forbidden_cargo_names.add(m.group(1))
 
 
