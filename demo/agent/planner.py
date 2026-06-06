@@ -75,7 +75,7 @@ class DeterministicPlanner:
         self._logger = logging.getLogger("agent.planner")
         self._qwen = QwenFlashHelper(api)
         self._qwen_review_count = 0
-        self._qwen_max_reviews = int(os.environ.get("AGENT_QWEN_MAX_REVIEWS", "10"))
+        self._qwen_max_reviews = int(os.environ.get("AGENT_QWEN_MAX_REVIEWS", "15"))
         self._qwen_last_rank_step = -999
         self._qwen_last_suggest_step = -999
         self._step_counter = 0
@@ -322,11 +322,19 @@ class DeterministicPlanner:
             if mod >= latest_start - pre_trigger:
                 duration = max(60, min(policy.daily_rest_minutes, day_end(now_minute) - now_minute))
                 return self._wait(duration)
+
+            # 硬截止：当天剩余时间不足以完成所需连续休息时，立即开始休息
+            # 这是最后防线，防止 cargo 查询消耗时间导致错过休息窗口
+            today_remain = max(0, day_end(now_minute) - now_minute)
+            if today_remain <= rest_minutes + 30 and rest_remaining >= rest_minutes * 0.5:
+                duration = max(60, min(policy.daily_rest_minutes, today_remain))
+                return self._wait(duration)
+
             # 如果当前正在休息中（最近动作是 wait >= 60 分钟），不打断
             if memory.records:
                 last = memory.records[-1]
                 if last.action_name == "wait" and last.action_exec_cost >= 60:
-                    return self._wait(max(60, min(policy.daily_rest_minutes, day_end(now_minute) - now_minute)))
+                    return self._wait(max(60, min(policy.daily_rest_minutes, today_remain)))
         return None
 
     def _family_action(
