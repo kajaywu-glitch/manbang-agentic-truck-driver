@@ -158,6 +158,11 @@ def parse_preferences(preferences: list[Any]) -> PreferencePolicy:
         _parse_required_region_days(text, item, policy)
         _parse_appointment(text, item, policy)
         _parse_route_sequence(text, item, policy)
+    # Cross-reference: fill missing appointment coordinates from required_visits
+    for appt in policy.appointments:
+        if appt.lat == 0.0 and appt.lng == 0.0 and policy.required_visits:
+            appt = AppointmentTask(appt.start_minute, appt.end_minute, policy.required_visits[0].lat, policy.required_visits[0].lng, appt.duration_minutes, appt.penalty_amount)
+            policy.appointments = [a for a in policy.appointments if not (a.lat == 0.0 and a.lng == 0.0)] + [appt]
     return policy
 
 
@@ -270,7 +275,8 @@ def should_preserve_off_day(policy: PreferencePolicy, memory: DriverMemory, now_
     # Only force off-day when remaining days are tight
     still_needed = needed - done
     days_remaining = MONTH_HORIZON_MINUTES // DAY_MINUTES - (now_minute // DAY_MINUTES)
-    return days_remaining <= still_needed
+    # More proactive: force off-day when buffer is tight (5 extra days margin)
+    return days_remaining <= still_needed + 5
 
 
 def should_preserve_no_order_day(policy: PreferencePolicy, memory: DriverMemory, now_minute: int) -> bool:
