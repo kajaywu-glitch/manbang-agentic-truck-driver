@@ -743,7 +743,7 @@ class DeterministicPlanner:
             finish_mod = minute_of_day(finish)
             if finish_mod >= latest_rs - 120:
                 # Cargo finishes within 2h of latest rest start — apply risk discount
-                rest_risk = (finish_mod - (latest_rs - 120)) * 0.3
+                rest_risk = (finish_mod - (latest_rs - 60)) * 0.1
                 score -= rest_risk
 
         # Risk-Gated MPC: penalty_risk 估算 — 接单后是否还能满足硬约束
