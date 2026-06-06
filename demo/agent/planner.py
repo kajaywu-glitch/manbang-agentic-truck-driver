@@ -788,10 +788,10 @@ class DeterministicPlanner:
                 rest_feasible, rest_penalty_est = self._rest_feasibility(
                     policy, now_minute, finish, rest_needed,
                 )
-                if not rest_feasible and rest_penalty_est > base_net * 0.5:
+                if not rest_feasible and rest_penalty_est > base_net * 0.3:
                     return None
                 if not rest_feasible:
-                    score -= rest_penalty_est * 0.2
+                    score -= rest_penalty_est * 0.3
 
         # Risk-Gated MPC: penalty_risk 估算 — 接单后是否还能满足硬约束
         penalty_risk = self._estimate_penalty_risk(
@@ -1046,9 +1046,9 @@ class DeterministicPlanner:
 
         # Estimate penalty: typical violation cost scales with rest duration
         # Short rest (3-4h): ~300/violation. Long rest (5-8h): ~200/violation.
-        per_violation = 200.0 if rest_minutes >= 300 else 300.0
+        per_violation = 200.0 if rest_minutes >= 300 else 400.0
         if policy.daily_rest_weekdays_only:
-            per_violation *= 0.7  # Fewer violation days → lower total penalty
+            per_violation *= 0.85  # Weekday-only: slightly fewer violation opportunities
 
         if feasible:
             return True, 0.0
