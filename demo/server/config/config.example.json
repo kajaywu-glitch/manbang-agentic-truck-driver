@@ -9,5 +9,6 @@
   "results_dir": "results",
   "log_dir": "results/logs",
   "simulation_max_steps": 20000,
-  "simulation_duration_days": 1
+  "simulation_duration_days": 1,
+  "driver_max_total_tokens": 5000000
 }

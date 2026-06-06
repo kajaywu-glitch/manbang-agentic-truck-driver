@@ -7,6 +7,10 @@
 !.env.example
 demo/server/config/config.json
 
+# Official data files (large, updated separately)
+demo/server/data/
+demo_docs_release_*.zip
+
 # Runtime outputs
 demo/results/
 *.log
