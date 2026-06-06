@@ -310,23 +310,28 @@ class DeterministicPlanner:
                 if dist > visit.radius_km and dist <= 120 and self._active_allowed(policy, now_minute, now_minute + distance_to_minutes(dist)):
                     return {"action": "reposition", "params": {"latitude": visit.lat, "longitude": visit.lng}}
 
-        # 连续休息前移：根据休息需求动态调整预触发窗口
-        # 休息需求越长，预触发越早（避免长休息被 cargo 切碎）
+        # === 架构重构：前置休息调度 ===
+        # 不再被动等待预触发窗口，而是在每天前半段主动安排休息块，
+        # 确保休息在 cargo 干扰之前完成。
         rest_remaining = needs_rest_today(policy, memory, now_minute)
         if rest_remaining > 0:
             rest_minutes = int(policy.daily_rest_minutes or 0)
-            # Pre-trigger = max(4h, rest_minutes) + rest debt from yesterday.
-            # If yesterday's longest rest was insufficient, increase urgency today
-            # to prevent consecutive violations from accumulating.
-            pre_trigger = max(240, rest_minutes)
+            mod = minute_of_day(now_minute)
 
-            # Early-morning rest continuation: if the last action was a
-            # substantial wait extending to or past midnight, keep resting
-            if minute_of_day(now_minute) < pre_trigger and memory.records:
+            # Phase 1: 清晨持续休息（午夜后的延续）
+            if mod < 360 and memory.records:
                 last = memory.records[-1]
                 if last.action_name == "wait" and last.action_exec_cost >= 60:
                     if abs(last.step_end - now_minute) <= 10:
-                        return self._wait(max(60, min(policy.daily_rest_minutes, day_end(now_minute) - now_minute)))
+                        return self._wait(max(60, min(rest_minutes, day_end(now_minute) - now_minute)))
+
+            # Phase 2: 上午主动休息 — 仅适用于短休息需求（≤4h），
+            # 在前半天完成短休息块，避免下午 cargo 压缩。长休息（8h）不动。
+            if mod < 12 * 60 and rest_minutes <= 240 and rest_remaining >= rest_minutes * 0.6:
+                return self._wait(max(60, min(rest_minutes, day_end(now_minute) - now_minute)))
+
+            # Phase 3: 下午被动触发（原有逻辑）
+            pre_trigger = max(240, rest_minutes)
 
             latest_start = self._latest_rest_start(policy, now_minute)
             mod = minute_of_day(now_minute)
@@ -776,15 +781,18 @@ class DeterministicPlanner:
         net_per_hour = base_net / (total_minutes / 60.0)
         score = base_net + 0.5 * net_per_hour - pickup_km * 0.35 - wait_minutes * 0.08
 
-        # Rest risk discount: when rest is needed, deprioritize cargos that
-        # finish close to latest_rest_start (they risk fragmenting rest).
+        # Rest compatibility bonus: when rest is needed, prefer cargos that
+        # finish early (leaving ample time for rest) over those that finish late.
         if policy.daily_rest_minutes > 0 and needs_rest_today(policy, memory, now_minute) > 0:
             latest_rs = self._latest_rest_start(policy, now_minute)
             finish_mod = minute_of_day(finish)
-            if finish_mod >= latest_rs - 120:
-                # Cargo finishes within 2h of latest rest start — apply risk discount
-                rest_risk = (finish_mod - (latest_rs - 60)) * 0.1
-                score -= rest_risk
+            margin = latest_rs - finish_mod
+            if margin > 120:
+                # Cargo finishes with >2h margin before rest deadline — bonus
+                score += min(30, margin * 0.15)
+            elif margin < 60:
+                # Cargo finishes too close to rest deadline — penalty
+                score -= (60 - margin) * 0.2
 
         # Risk-Gated MPC: penalty_risk 估算 — 接单后是否还能满足硬约束
         penalty_risk = self._estimate_penalty_risk(
