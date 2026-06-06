@@ -2,7 +2,7 @@
 
 最后更新：2026-06-06 23:28 +08:00
 
-本次更新：P0 关闭无效 preference_hints 已验证，稳定基线为 154,296.52 净收入 / 8,355 罚分 / 25,721 Token。P1 机会成本休息调度因罚分增加 5,000 已回退；P2 Qwen 预算预留经 Codex 审阅发现准入和记账逻辑不成立，已回退；未验证的晨间休息收益逃逸也已回退。
+本次更新：Phase 1 休息诊断 + Phase 2 类别预算首次达成罚分 7,380（低于 8,000 目标）。诊断日志记录休息缺口/债务，类别预算（family/home_night/high_rest 预留）将 Qwen 调用导向高罚分司机。净收入 145,007 需恢复。新分支 `deepseek/fourth-round-optimization`。
 
 这份文档给 DeepSeek、Claude Code、Codex 和用户共同使用。目标是让 DeepSeek 可以持续构建，Codex 可以随时审阅，而不会互相覆盖代码或把未验证改动直接推到 `main`。
 
