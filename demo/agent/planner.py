@@ -78,14 +78,14 @@ class DeterministicPlanner:
         self._qwen = QwenFlashHelper(api)
         self._qwen_review_count = 0
         self._qwen_review_counts_by_driver: dict[str, int] = {}
-        self._qwen_max_reviews = max(0, int(os.environ.get("AGENT_QWEN_MAX_REVIEWS", "25")))
+        self._qwen_max_reviews = max(0, int(os.environ.get("AGENT_QWEN_MAX_REVIEWS", "15")))
         self._qwen_max_reviews_per_driver = max(
             0, int(os.environ.get("AGENT_QWEN_MAX_REVIEWS_PER_DRIVER", "5"))
         )
         self._qwen_last_call_step_by_driver: dict[str, int] = {}
         self._qwen_ranked_drivers: set[str] = set()
         self._qwen_rank_count = 0
-        self._qwen_max_ranks = max(0, int(os.environ.get("AGENT_QWEN_MAX_RANKS", "10")))
+        self._qwen_max_ranks = max(0, int(os.environ.get("AGENT_QWEN_MAX_RANKS", "5")))
         self._qwen_rank_gap_ratio = float(os.environ.get("AGENT_QWEN_RANK_MAX_GAP_RATIO", "0.25"))
         self._qwen_suggest_gap_ratio = float(os.environ.get("AGENT_QWEN_SUGGEST_MAX_GAP_RATIO", "0.25"))
         self._step_counter = 0
