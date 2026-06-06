@@ -540,7 +540,8 @@ class DeterministicPlanner:
             and not self._verification_has_priority(policy, memory, now_minute)
             and driver_id not in self._qwen_ranked_drivers
             and self._qwen_rank_count < self._qwen_max_ranks
-            and self._qwen_review_available(driver_id, cooldown_steps=10, category="general")
+            and self._qwen.enabled
+            and self._step_counter - self._qwen_last_call_step_by_driver.get(driver_id, -999) >= 10
         )
         if should_rank:
             constraints = {
@@ -560,7 +561,7 @@ class DeterministicPlanner:
                 for item, plan in top_ranked_plans
             ]
             model_scores = self._qwen.rank_cargos(driver_id, status, cargo_items, constraints)
-            self._record_qwen_review(driver_id, "rank_cargos", category="general")
+            self._qwen_review_count += 1  # count but don't consume category budget
             self._qwen_ranked_drivers.add(driver_id)
             self._qwen_rank_count += 1
             if model_scores:
