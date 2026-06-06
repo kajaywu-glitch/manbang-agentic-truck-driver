@@ -860,7 +860,7 @@ class DeterministicPlanner:
             # 休息紧迫度：使用安静窗口开始时间（如果有）来计算最晚休息开始
             latest_start = self._latest_rest_start(policy, now_minute)
             urgency = max(0, minute_of_day(now_minute) - latest_start + 60)
-            rest_score = 600.0 + rest_remaining * 0.5 + urgency * 0.4
+            rest_score = 800.0 + rest_remaining * 1.0 + urgency * 0.5
             # 更积极地触发休息：提前4小时，或没有好订单时提前3小时
             has_good_cargo = best_cargo is not None and best_cargo.score > 100
             if minute_of_day(now_minute) >= latest_start - 240 or (not has_good_cargo and rest_remaining > 60):
