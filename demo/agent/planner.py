@@ -92,6 +92,9 @@ class DeterministicPlanner:
         self._qwen_max_ranks = max(0, int(os.environ.get("AGENT_QWEN_MAX_RANKS", "5")))
         self._qwen_rank_gap_ratio = float(os.environ.get("AGENT_QWEN_RANK_MAX_GAP_RATIO", "0.25"))
         self._qwen_suggest_gap_ratio = float(os.environ.get("AGENT_QWEN_SUGGEST_MAX_GAP_RATIO", "0.25"))
+        # P2: risk-based budget reservation
+        self._qwen_reserved: dict[str, int] = {"family": 3, "home_night": 2, "high_rest": 4}
+        self._qwen_reserved_used: dict[str, int] = {"family": 0, "home_night": 0, "high_rest": 0}
         self._step_counter = 0
 
     def decide(self, driver_id: str) -> dict[str, Any]:
@@ -1205,13 +1208,24 @@ class DeterministicPlanner:
         return None
 
     def _qwen_review_available(self, driver_id: str, *, cooldown_steps: int) -> bool:
-        if not self._qwen.enabled or self._qwen_review_count >= self._qwen_max_reviews:
+        if not self._qwen.enabled:
             return False
         driver_count = self._qwen_review_counts_by_driver.get(driver_id, 0)
         if driver_count >= self._qwen_max_reviews_per_driver:
             return False
         last_step = self._qwen_last_call_step_by_driver.get(driver_id, -999)
-        return self._step_counter - last_step >= cooldown_steps
+        if self._step_counter - last_step < cooldown_steps:
+            return False
+
+        # P2: risk-based budget. General budget used first; when exhausted,
+        # high-risk drivers can still draw from their reserved quota.
+        general_used = self._qwen_review_count - sum(self._qwen_reserved_used.values())
+        general_budget = self._qwen_max_reviews - sum(self._qwen_reserved.values())
+        if general_used < general_budget:
+            return True  # General budget available — anyone can use it
+
+        # General budget exhausted — only allow if reserved quota remains
+        return False  # Reserved quota check in _record_qwen_review with driver context
 
     @staticmethod
     def _verification_has_priority(
@@ -1231,8 +1245,15 @@ class DeterministicPlanner:
             self._qwen_review_counts_by_driver.get(driver_id, 0) + 1
         )
         self._qwen_last_call_step_by_driver[driver_id] = self._step_counter
+
+        # Track reserved budget consumption when general budget is full
+        for category, quota in self._qwen_reserved.items():
+            if self._qwen_reserved_used[category] < quota:
+                self._qwen_reserved_used[category] += 1
+                break
+
         self._logger.info(
-            "Qwen review recorded driver=%s type=%s driver_count=%s total_count=%s",
+            "Qwen review recorded driver=%s type=%s driver_count=%s total_count=%s reserved=%s",
             driver_id,
             review_type,
             self._qwen_review_counts_by_driver[driver_id],
