@@ -735,7 +735,7 @@ class DeterministicPlanner:
                     travel_home_after = distance_to_minutes(haversine_km(end_lat, end_lng, home.lat, home.lng))
                 effective_finish = finish + travel_home_after
                 remaining_today = day_end(now_minute) - effective_finish
-                # 确保 cargo 完成后有足够时间完成完整连续休息块（含 90min 缓冲）
+                # 确保 cargo 完成后有足够时间完成完整连续休息块（含 30min 缓冲）
                 if remaining_today < policy.daily_rest_minutes + 30:
                     return None
                 # 如果接单完成时间太晚（在休息开始时间之后），拒绝
@@ -1106,11 +1106,11 @@ class DeterministicPlanner:
 
         if scenario == "home_night" and policy.home_night is not None:
             hn = policy.home_night
-            ctx["home_lat"] = hn.home_lat
-            ctx["home_lng"] = hn.home_lng
-            ctx["dist_home_km"] = haversine_km(lat, lng, hn.home_lat, hn.home_lng)
+            ctx["home_lat"] = hn.lat
+            ctx["home_lng"] = hn.lng
+            ctx["dist_home_km"] = haversine_km(lat, lng, hn.lat, hn.lng)
             ctx["travel_home_min"] = distance_to_minutes(ctx["dist_home_km"])
-            ctx["end_to_home_km"] = haversine_km(ctx["end_lat"], ctx["end_lng"], hn.home_lat, hn.home_lng)
+            ctx["end_to_home_km"] = haversine_km(ctx["end_lat"], ctx["end_lng"], hn.lat, hn.lng)
             ctx["end_to_home_min"] = distance_to_minutes(ctx["end_to_home_km"])
             deadline = now_minute - minute_of_day(now_minute) + hn.deadline_minute_of_day
             if deadline <= now_minute:

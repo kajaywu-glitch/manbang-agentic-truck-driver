@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from agent.llm_helper import QwenFlashHelper
 from agent.planner import CargoPlan, Candidate, DeterministicPlanner
-from agent.preference_rules import PreferencePolicy
+from agent.preference_rules import HomeNightRule, PreferencePolicy
 from agent.state_tracker import DriverMemory
 
 
@@ -148,6 +148,40 @@ class QwenIntegrationTests(unittest.TestCase):
                 12 * 60,
             )
         )
+
+    def test_home_night_verification_uses_rule_coordinates(self) -> None:
+        planner = DeterministicPlanner(FakeApi())
+        policy = PreferencePolicy(
+            home_night=HomeNightRule(
+                lat=23.12,
+                lng=113.28,
+                radius_km=1.0,
+                deadline_minute_of_day=23 * 60,
+                quiet_start_minute=23 * 60,
+                quiet_end_minute=8 * 60,
+            )
+        )
+        chosen = Candidate(
+            {"action": "take_order", "params": {"cargo_id": "C1"}},
+            100.0,
+            "best_cargo",
+            {"estimated_minutes": 60, "end_lat": 23.2, "end_lng": 113.3},
+        )
+
+        context = planner._build_verification_context(
+            "home_night",
+            {},
+            DriverMemory(),
+            policy,
+            chosen,
+            18 * 60,
+            23.0,
+            113.0,
+        )
+
+        self.assertEqual(context["home_lat"], 23.12)
+        self.assertEqual(context["home_lng"], 113.28)
+        self.assertGreater(context["time_to_deadline"], 0)
 
 
 if __name__ == "__main__":

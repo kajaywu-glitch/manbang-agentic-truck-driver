@@ -2,7 +2,7 @@
 
 最后更新：2026-06-06 17:40 +08:00
 
-本次更新：架构重构突破——上午主动休息（≤4h 司机）+ 货源休息兼容性奖励。新冠军：净收入 153,541 / 罚分 **8,355**（-35.5%，距 8,000 仅差 355）/ token 64,567。qwen3.5-flash 全功能 + net_per_hour=0.5。
+本次更新：上午主动休息（≤4h 司机）+ 货源休息兼容性奖励形成低罚分 Pareto 候选：净收入 153,541 / 罚分 **8,355** / token 64,567。Codex 已修复 D009 home-night 校验属性错误，等待下一轮结果确认。
 
 这份文档给 DeepSeek、Claude Code、Codex 和用户共同使用。目标是让 DeepSeek 可以持续构建，Codex 可以随时审阅，而不会互相覆盖代码或把未验证改动直接推到 `main`。
 
@@ -438,26 +438,26 @@ git -C D:\竞赛 push origin main
 
 ## 给用户的最短操作口令
 
-让 DeepSeek 开始下一轮优化（口令更新时间：2026-06-06 12:20 +08:00）：
+让 DeepSeek 开始下一轮优化（口令更新时间：2026-06-06 18:00 +08:00）：
 
 ```text
 请先阅读 D:\竞赛\WORKFLOW_DEEPSEEK_CODEX.md、D:\竞赛\CLAUDE.md 和 D:\竞赛\demo\agent\README.md。
-当前分支 deepseek/third-round-optimization，冠军成绩 156,973 净收入 / 12,955 罚分 / 46,149 token（qwen3.5-flash, max_reviews=20）。
-终极目标为净收入至少 160,000、罚分不高于 8,000、token 低于 50,000、failed=0。当前主要差距是 D010 家事和 D008/D002 跨天休息。
-Codex 已修正 Qwen 真实里程/时薪上下文、风险校验错误导入、单步重复调用和单司机调用集中问题；新成绩须由本轮 CC 完整仿真确认。
+当前低罚分候选成绩为 153,541 净收入 / 8,355 罚分 / 64,567 token；旧净收入冠军为 156,973 / 12,955 / 46,149，两者互不支配。
+终极目标为净收入至少 160,000、罚分不高于 8,000、token 低于 50,000、failed=0。
+Codex 已修复日志中 D009 的 HomeNightRule 属性异常。不要重复旧实验，直接基于最新 main 继续。
 
 下一轮优先级：
-1. 结构性重构：建立跨天休息台账、休息债务和订单结束后的可行性投影，不再只调休息分数参数
-2. 家事约束：把可见窗口内的返程、等待和停留建模为硬可行性计划
-3. Qwen 审计：确认调用公平分布、风险校验优先且真实改变决策时才消耗 token
-4. 保持确定性底座不回退，并用 Pareto 标准筛选改动
+1. 建立统一的跨日休息可行性投影，优先解决 D006，再降低 D002/D008/D010 违规天数
+2. 把上午主动休息改成机会成本感知调度，只在预计罚分收益大于放弃订单收益时触发
+3. 将 Qwen 风险复核改为按预期罚分收益分配预算，目标 Token <50,000
+4. 保留 156,973 净收入版本和 8,355 罚分版本作为双基线，只接受 Pareto 改善
 
 Qwen 运行命令：
-  $env:AGENT_ENABLE_QWEN35_FLASH="1"; $env:AGENT_QWEN_MAX_REVIEWS="20"; $env:AGENT_QWEN_MAX_REVIEWS_PER_DRIVER="2"; $env:AGENT_QWEN_MAX_RANKS="4"
+  $env:AGENT_ENABLE_QWEN35_FLASH="1"; $env:AGENT_QWEN_MAX_REVIEWS="15"; $env:AGENT_QWEN_MAX_REVIEWS_PER_DRIVER="5"; $env:AGENT_QWEN_MAX_RANKS="5"
   D:\竞赛\.venv\Scripts\python.exe demo\server\main.py
 ```
 
-让 Codex 审阅（口令更新时间：2026-06-06 12:20 +08:00）：
+让 Codex 审阅（口令更新时间：2026-06-06 18:00 +08:00）：
 
 ```text
 请审阅 deepseek/third-round-optimization 分支最新改动，按审阅规则检查合规性、hardcode、Qwen 调用受控性，以及是否可以合并到 main。
