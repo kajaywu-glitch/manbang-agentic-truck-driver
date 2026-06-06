@@ -19,6 +19,7 @@ from agent.geo import (
     haversine_km,
     interval_overlap,
     minute_of_day,
+    minutes_to_wall_time,
     wall_time_to_minutes,
 )
 from agent.llm_helper import QWEN_MODEL, QwenFlashHelper
@@ -47,6 +48,7 @@ class Candidate:
     action: dict[str, Any]
     score: float
     reason: str
+    model_context: dict[str, Any] | None = None
 
 
 @dataclass(frozen=True)
@@ -75,9 +77,17 @@ class DeterministicPlanner:
         self._logger = logging.getLogger("agent.planner")
         self._qwen = QwenFlashHelper(api)
         self._qwen_review_count = 0
-        self._qwen_max_reviews = int(os.environ.get("AGENT_QWEN_MAX_REVIEWS", "20"))
-        self._qwen_last_rank_step = -999
-        self._qwen_last_suggest_step = -999
+        self._qwen_review_counts_by_driver: dict[str, int] = {}
+        self._qwen_max_reviews = max(0, int(os.environ.get("AGENT_QWEN_MAX_REVIEWS", "20")))
+        self._qwen_max_reviews_per_driver = max(
+            0, int(os.environ.get("AGENT_QWEN_MAX_REVIEWS_PER_DRIVER", "2"))
+        )
+        self._qwen_last_call_step_by_driver: dict[str, int] = {}
+        self._qwen_ranked_drivers: set[str] = set()
+        self._qwen_rank_count = 0
+        self._qwen_max_ranks = max(0, int(os.environ.get("AGENT_QWEN_MAX_RANKS", "4")))
+        self._qwen_rank_gap_ratio = float(os.environ.get("AGENT_QWEN_RANK_MAX_GAP_RATIO", "0.08"))
+        self._qwen_suggest_gap_ratio = float(os.environ.get("AGENT_QWEN_SUGGEST_MAX_GAP_RATIO", "0.15"))
         self._step_counter = 0
 
     def decide(self, driver_id: str) -> dict[str, Any]:
@@ -152,18 +162,16 @@ class DeterministicPlanner:
         # 确定性选择
         chosen = max(candidates, key=lambda c: c.score)
 
-        # Qwen3.5-Flash 约束验证 + 决策建议
-        suggest_cooldown = self._step_counter - self._qwen_last_suggest_step >= 5
-        if self._qwen.enabled and self._qwen_review_count < self._qwen_max_reviews and suggest_cooldown:
-            # Step 1: constraint verification for high-risk scenarios
+        # One model call per decision. Risk verification takes precedence over
+        # optional action selection, and each driver gets an independent quota.
+        if self._qwen_review_available(driver_id, cooldown_steps=5):
             scenario = self._detect_risk_scenario(policy, memory, chosen, now_minute)
             if scenario is not None:
                 verify_ctx = self._build_verification_context(
                     scenario, status, memory, policy, chosen, now_minute, lat, lng,
                 )
                 verification = self._qwen.verify_constraints(driver_id, scenario, verify_ctx)
-                self._qwen_review_count += 1
-                self._qwen_last_suggest_step = self._step_counter
+                self._record_qwen_review(driver_id, "verify_constraints")
                 if verification is not None and not verification.get("safe", True):
                     self._logger.warning(
                         "Qwen verification: UNSAFE driver=%s scenario=%s risk=%s concern=%s",
@@ -181,27 +189,28 @@ class DeterministicPlanner:
                         "Qwen verification: safe driver=%s scenario=%s risk=%s",
                         driver_id, scenario, verification.get("risk") if verification else "n/a",
                     )
-
-            # Step 2: suggest_decision — let qwen3.5-flash choose among candidates
-            # when multiple options exist and the decision isn't obvious
-            if len(candidates) > 1 and self._qwen_review_count < self._qwen_max_reviews:
+            elif len(candidates) > 1 and self._candidate_gap_ratio(candidates) <= self._qwen_suggest_gap_ratio:
                 suggest_ctx = {
                     "now_minute": now_minute,
                     "rest_needed": needs_rest_today(policy, memory, now_minute),
                     "has_home_night": policy.home_night is not None,
                     "has_family": policy.family_task is not None,
+                    "score_gap_ratio": round(self._candidate_gap_ratio(candidates), 4),
                 }
                 cand_dicts = [
-                    {"action": c.action.get("action", ""), "params": c.action.get("params", {}),
-                     "reason": c.reason}
+                    {
+                        "action": c.action.get("action", ""),
+                        "params": c.action.get("params", {}),
+                        "reason": c.reason,
+                        **(c.model_context or {}),
+                    }
                     for c in candidates
                 ]
                 model_idx = self._qwen.suggest_decision(driver_id, status, cand_dicts, suggest_ctx)
-                self._qwen_review_count += 1
-                self._qwen_last_suggest_step = self._step_counter
+                self._record_qwen_review(driver_id, "suggest_decision")
                 if model_idx is not None and 0 <= model_idx < len(candidates):
                     model_choice = candidates[model_idx]
-                    if model_choice.score >= chosen.score * 0.5:
+                    if self._score_gap_ratio(chosen.score, model_choice.score) <= self._qwen_suggest_gap_ratio:
                         self._logger.info(
                             "Qwen suggest: model chose %s (score=%.1f) over %s (score=%.1f) for driver=%s",
                             model_choice.reason, model_choice.score,
@@ -502,13 +511,18 @@ class DeterministicPlanner:
             if best is None or plan.score > best.score:
                 best = plan
 
-        # qwen3.5-flash 约束感知货源评分：每 10 步最多调用 1 次，全局上限内
-        rank_cooldown = self._step_counter - self._qwen_last_rank_step >= 10
+        ranked_plans = sorted(evaluated_plans, key=lambda pair: pair[1].score, reverse=True)
+        rank_gap = (
+            self._score_gap_ratio(ranked_plans[0][1].score, ranked_plans[1][1].score)
+            if len(ranked_plans) >= 2 else 1.0
+        )
         should_rank = (
-            self._qwen.enabled
-            and self._qwen_review_count < self._qwen_max_reviews
-            and rank_cooldown
-            and len(evaluated_plans) >= 2
+            len(ranked_plans) >= 2
+            and rank_gap <= self._qwen_rank_gap_ratio
+            and not self._verification_has_priority(policy, memory, now_minute)
+            and driver_id not in self._qwen_ranked_drivers
+            and self._qwen_rank_count < self._qwen_max_ranks
+            and self._qwen_review_available(driver_id, cooldown_steps=10)
         )
         if should_rank:
             constraints = {
@@ -522,30 +536,40 @@ class DeterministicPlanner:
                     if policy.max_month_deadhead_km is not None else None
                 ),
             }
-            cargo_items = [item for item, _ in evaluated_plans]
+            top_ranked_plans = ranked_plans[:3]
+            cargo_items = [
+                self._cargo_for_qwen(item, plan, now_minute)
+                for item, plan in top_ranked_plans
+            ]
             model_scores = self._qwen.rank_cargos(driver_id, status, cargo_items, constraints)
-            self._qwen_review_count += 1  # 无论成功失败都计数，避免无限重试
-            self._qwen_last_rank_step = self._step_counter
+            self._record_qwen_review(driver_id, "rank_cargos")
+            self._qwen_ranked_drivers.add(driver_id)
+            self._qwen_rank_count += 1
             if model_scores:
-                # 融合：alpha * model_score + (1-alpha) * det_score
                 alpha = 0.35
-                best_after_blend = None
-                for item, plan in evaluated_plans:
+                blended_plans: list[tuple[CargoPlan, float]] = []
+                for _, plan in top_ranked_plans:
                     model_s = model_scores.get(plan.cargo_id)
                     if model_s is not None:
-                        # model_s 是 0-100，det_score 通常是 -500 到 500+
-                        # 将 model_s 映射到 det_score 的量级
                         blended = alpha * (model_s * 5.0) + (1 - alpha) * plan.score
-                        if best_after_blend is None or blended > best_after_blend[1]:
-                            best_after_blend = (plan, blended)
-                if best_after_blend is not None and best_after_blend[0].cargo_id != best.cargo_id:
+                        blended_plans.append((plan, blended))
+                baseline_blend = next(
+                    (score for plan, score in blended_plans if plan.cargo_id == best.cargo_id),
+                    None,
+                )
+                best_after_blend = max(blended_plans, key=lambda pair: pair[1]) if blended_plans else None
+                if (
+                    baseline_blend is not None
+                    and best_after_blend is not None
+                    and best_after_blend[1] > baseline_blend
+                    and best_after_blend[0].cargo_id != best.cargo_id
+                ):
                     self._logger.info(
                         "Qwen rank: model reranked cargo %s (%.0f) over %s (%.0f) for driver=%s",
                         best_after_blend[0].cargo_id, best_after_blend[1],
-                        best.cargo_id, best.score, driver_id,
+                        best.cargo_id, baseline_blend, driver_id,
                     )
                     best = best_after_blend[0]
-                    # 更新 score 为融合后的值
                     best = CargoPlan(
                         cargo_id=best.cargo_id, cargo_name=best.cargo_name,
                         price=best.price, pickup_km=best.pickup_km, haul_km=best.haul_km,
@@ -560,7 +584,21 @@ class DeterministicPlanner:
             return None
         if best.score < 15.0:
             return None
-        return Candidate({"action": "take_order", "params": {"cargo_id": best.cargo_id}}, best.score, "best_cargo")
+        estimated_net = best.price - (best.pickup_km + best.haul_km) * DEFAULT_COST_PER_KM
+        estimated_total_minutes = max(1, best.finish_minutes - now_minute)
+        return Candidate(
+            {"action": "take_order", "params": {"cargo_id": best.cargo_id}},
+            best.score,
+            "best_cargo",
+            {
+                "estimated_net": round(estimated_net, 2),
+                "estimated_minutes": estimated_total_minutes,
+                "pickup_km": round(best.pickup_km, 2),
+                "haul_km": round(best.haul_km, 2),
+                "end_lat": best.end_lat,
+                "end_lng": best.end_lng,
+            },
+        )
 
     def _evaluate_cargo(
         self,
@@ -994,6 +1032,11 @@ class DeterministicPlanner:
         reason = chosen.reason or ""
         mod = minute_of_day(now_minute)
 
+        # Temporary family deadlines have the largest penalty and must not be
+        # hidden behind the ordinary daily-rest scenario.
+        if policy.family_task is not None and now_minute >= policy.family_task.start_minute - 48 * 60:
+            return "family"
+
         # Home-night: only trigger in afternoon/evening when time pressure exists
         if policy.home_night is not None and mod >= 15 * 60:
             if chosen.action.get("action") == "take_order":
@@ -1003,10 +1046,6 @@ class DeterministicPlanner:
         rest_needed = needs_rest_today(policy, memory, now_minute)
         if rest_needed > 0 and policy.daily_rest_minutes > 0:
             return "rest"
-
-        # Family: trigger within 48h of family task
-        if policy.family_task is not None and now_minute >= policy.family_task.start_minute - 48 * 60:
-            return "family"
 
         return None
 
@@ -1022,8 +1061,6 @@ class DeterministicPlanner:
         lng: float,
     ) -> dict[str, Any]:
         """Build scenario-specific context dict for Qwen verification."""
-        from agent.preference_rules import minutes_to_wall_time  # noqa: F811 - local import
-
         ctx: dict[str, Any] = {
             "wall_time": minutes_to_wall_time(now_minute),
             "lat": lat,
@@ -1037,22 +1074,22 @@ class DeterministicPlanner:
 
         # Estimate action duration
         if chosen.action.get("action") == "take_order":
-            ctx["action_duration"] = chosen.action.get("params", {}).get("estimated_minutes", 60)
+            model_ctx = chosen.model_context or {}
+            ctx["action_duration"] = int(model_ctx.get("estimated_minutes", 60) or 60)
             ctx["finish_time"] = minutes_to_wall_time(now_minute + ctx["action_duration"])
-            # Try to get end position from cargo evaluation
-            cargo_end = chosen.action.get("params", {}).get("_end_lat")
-            if cargo_end is not None:
-                ctx["end_lat"] = float(chosen.action["params"].get("_end_lat", lat))
-                ctx["end_lng"] = float(chosen.action["params"].get("_end_lng", lng))
+            ctx["end_lat"] = float(model_ctx.get("end_lat", lat))
+            ctx["end_lng"] = float(model_ctx.get("end_lng", lng))
         elif chosen.action.get("action") == "wait":
             ctx["action_duration"] = chosen.action.get("params", {}).get("duration_minutes", 60)
             ctx["finish_time"] = minutes_to_wall_time(now_minute + ctx["action_duration"])
         elif chosen.action.get("action") == "reposition":
-            ctx["action_duration"] = 30
-            ctx["finish_time"] = minutes_to_wall_time(now_minute + 30)
             rp = chosen.action.get("params", {})
             ctx["end_lat"] = float(rp.get("latitude", lat))
             ctx["end_lng"] = float(rp.get("longitude", lng))
+            ctx["action_duration"] = distance_to_minutes(
+                haversine_km(lat, lng, ctx["end_lat"], ctx["end_lng"])
+            )
+            ctx["finish_time"] = minutes_to_wall_time(now_minute + ctx["action_duration"])
 
         if scenario == "home_night" and policy.home_night is not None:
             hn = policy.home_night
@@ -1062,7 +1099,10 @@ class DeterministicPlanner:
             ctx["travel_home_min"] = distance_to_minutes(ctx["dist_home_km"])
             ctx["end_to_home_km"] = haversine_km(ctx["end_lat"], ctx["end_lng"], hn.home_lat, hn.home_lng)
             ctx["end_to_home_min"] = distance_to_minutes(ctx["end_to_home_km"])
-            deadline = day_end(now_minute) if minute_of_day(now_minute) < 23 * 60 else day_end(now_minute) + DAY_MINUTES
+            deadline = now_minute - minute_of_day(now_minute) + hn.deadline_minute_of_day
+            if deadline <= now_minute:
+                deadline += DAY_MINUTES
+            ctx["deadline_time"] = minutes_to_wall_time(deadline)
             ctx["time_to_deadline"] = deadline - now_minute
 
         elif scenario == "rest":
@@ -1101,28 +1141,89 @@ class DeterministicPlanner:
         if risk not in ("medium", "high"):
             return None  # Only act on medium/high risk
 
-        # For home_night risk: prefer reposition home or wait
+        # A generic market reposition is not necessarily a trip home. Keep the
+        # deterministic action unless a future candidate is explicitly marked.
         if scenario == "home_night":
             for c in candidates:
-                if c.action.get("action") == "reposition":
-                    return c
-            return None  # Keep original if no reposition candidate
-
-        # For rest risk: prefer wait/rest
-        if scenario == "rest":
-            for c in candidates:
-                if c.action.get("action") == "wait":
+                if c.action.get("params", {}).get("_qwen_safe_for") == "home_night":
                     return c
             return None
 
-        # For family risk: prefer wait (don't commit to anything)
+        if scenario == "rest":
+            for c in candidates:
+                if c.action.get("action") == "wait" and c.reason == "rest":
+                    return c
+            return None
+
         if scenario == "family":
             for c in candidates:
-                if c.action.get("action") == "wait":
+                if c.action.get("params", {}).get("_qwen_safe_for") == "family":
                     return c
             return None
 
         return None
+
+    def _qwen_review_available(self, driver_id: str, *, cooldown_steps: int) -> bool:
+        if not self._qwen.enabled or self._qwen_review_count >= self._qwen_max_reviews:
+            return False
+        driver_count = self._qwen_review_counts_by_driver.get(driver_id, 0)
+        if driver_count >= self._qwen_max_reviews_per_driver:
+            return False
+        last_step = self._qwen_last_call_step_by_driver.get(driver_id, -999)
+        return self._step_counter - last_step >= cooldown_steps
+
+    @staticmethod
+    def _verification_has_priority(
+        policy: PreferencePolicy,
+        memory: DriverMemory,
+        now_minute: int,
+    ) -> bool:
+        if policy.family_task is not None and now_minute >= policy.family_task.start_minute - 48 * 60:
+            return True
+        if policy.home_night is not None and minute_of_day(now_minute) >= 15 * 60:
+            return True
+        return policy.daily_rest_minutes > 0 and needs_rest_today(policy, memory, now_minute) > 0
+
+    def _record_qwen_review(self, driver_id: str, review_type: str) -> None:
+        self._qwen_review_count += 1
+        self._qwen_review_counts_by_driver[driver_id] = (
+            self._qwen_review_counts_by_driver.get(driver_id, 0) + 1
+        )
+        self._qwen_last_call_step_by_driver[driver_id] = self._step_counter
+        self._logger.info(
+            "Qwen review recorded driver=%s type=%s driver_count=%s total_count=%s",
+            driver_id,
+            review_type,
+            self._qwen_review_counts_by_driver[driver_id],
+            self._qwen_review_count,
+        )
+
+    @staticmethod
+    def _score_gap_ratio(best_score: float, other_score: float) -> float:
+        return max(0.0, best_score - other_score) / max(1.0, abs(best_score))
+
+    @classmethod
+    def _candidate_gap_ratio(cls, candidates: list[Candidate]) -> float:
+        if len(candidates) < 2:
+            return 1.0
+        ordered = sorted((candidate.score for candidate in candidates), reverse=True)
+        return cls._score_gap_ratio(ordered[0], ordered[1])
+
+    @staticmethod
+    def _cargo_for_qwen(item: Any, plan: CargoPlan, now_minute: int) -> dict[str, Any]:
+        enriched = dict(item) if isinstance(item, dict) else {}
+        estimated_net = plan.price - (plan.pickup_km + plan.haul_km) * DEFAULT_COST_PER_KM
+        total_minutes = max(1, plan.finish_minutes - now_minute)
+        enriched.update(
+            {
+                "distance_km": plan.pickup_km,
+                "haul_distance_km": plan.haul_km,
+                "estimated_net_yuan": estimated_net,
+                "estimated_total_minutes": total_minutes,
+                "estimated_net_per_hour": estimated_net / (total_minutes / 60.0),
+            }
+        )
+        return enriched
 
     @staticmethod
     def _wait(duration_minutes: int) -> dict[str, Any]:

@@ -103,20 +103,22 @@ class QwenFlashHelper:
         if not self.enabled or not cargos:
             return {}
 
-        top_cargos = cargos[:3]
         cargo_summaries = []
-        for c in top_cargos:
+        for c in cargos[:3]:
             cargo = c.get("cargo", {})
-            start = cargo.get("start", {})
             end = cargo.get("end", {})
             price = float(cargo.get("price", 0) or 0)
             pickup = float(c.get("distance_km", 0) or 0)
             haul = float(c.get("haul_distance_km", 0) or 0)
             cost_time = int(cargo.get("cost_time_minutes", 0) or 0)
-            travel_cost = (pickup + haul) * 1.5
-            base_net = price - travel_cost
-            total_hours = max(0.02, (pickup * 1.0 + cost_time) / 60.0)
-            net_per_hour = base_net / total_hours
+            base_net = float(c.get("estimated_net_yuan", price - (pickup + haul) * 1.5))
+            total_minutes = int(c.get("estimated_total_minutes", cost_time) or cost_time)
+            net_per_hour = float(
+                c.get(
+                    "estimated_net_per_hour",
+                    base_net / max(0.02, total_minutes / 60.0),
+                )
+            )
             cargo_summaries.append({
                 "cargo_id": str(cargo.get("cargo_id", "")),
                 "name": str(cargo.get("cargo_name", "")),
@@ -215,7 +217,10 @@ class QwenFlashHelper:
             # Expose actionable params but NOT the deterministic score
             if c.get("action") == "take_order":
                 summary["cargo_id"] = str(params.get("cargo_id", ""))
-                summary["estimated_net"] = params.get("estimated_net", "?")
+                summary["estimated_net"] = c.get("estimated_net", "?")
+                summary["estimated_minutes"] = c.get("estimated_minutes", "?")
+                summary["pickup_km"] = c.get("pickup_km", "?")
+                summary["haul_km"] = c.get("haul_km", "?")
             elif c.get("action") == "wait":
                 summary["duration_minutes"] = params.get("duration_minutes", 60)
             elif c.get("action") == "reposition":

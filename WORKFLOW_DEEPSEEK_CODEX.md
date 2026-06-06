@@ -438,24 +438,26 @@ git -C D:\竞赛 push origin main
 
 ## 给用户的最短操作口令
 
-让 DeepSeek 开始下一轮优化（口令更新时间：2026-06-06 03:40 +08:00）：
+让 DeepSeek 开始下一轮优化（口令更新时间：2026-06-06 12:20 +08:00）：
 
 ```text
 请先阅读 D:\竞赛\WORKFLOW_DEEPSEEK_CODEX.md、D:\竞赛\CLAUDE.md 和 D:\竞赛\demo\agent\README.md。
-当前分支 deepseek/third-round-optimization，最优成绩 156,973 净收入 / 12,955 罚分 / 60,633 token（qwen3.5-flash, max_reviews=20）。
-净收入目标 155,000 已达成。罚分 12,955 未达 8,000（D010 家事+D008/D002 休息为结构性限制）。
+当前分支 deepseek/third-round-optimization，冠军成绩 156,973 净收入 / 12,955 罚分 / 46,149 token（qwen3.5-flash, max_reviews=20）。
+终极目标为净收入至少 160,000、罚分不高于 8,000、token 低于 50,000、failed=0。当前主要差距是 D010 家事和 D008/D002 跨天休息。
+Codex 已修正 Qwen 真实里程/时薪上下文、风险校验错误导入、单步重复调用和单司机调用集中问题；新成绩须由本轮 CC 完整仿真确认。
 
 下一轮优先级：
-1. 罚分优化：D008/D002 跨天休息预测、D010 家事窗口内休息管理
-2. Token 优化：控制 qwen3.5-flash reasoning token 在 50,000 以内
-3. 确定性底座稳定性验证
+1. 结构性重构：建立跨天休息台账、休息债务和订单结束后的可行性投影，不再只调休息分数参数
+2. 家事约束：把可见窗口内的返程、等待和停留建模为硬可行性计划
+3. Qwen 审计：确认调用公平分布、风险校验优先且真实改变决策时才消耗 token
+4. 保持确定性底座不回退，并用 Pareto 标准筛选改动
 
 Qwen 运行命令：
-  $env:AGENT_ENABLE_QWEN35_FLASH="1"; $env:AGENT_QWEN_MAX_REVIEWS="20"
+  $env:AGENT_ENABLE_QWEN35_FLASH="1"; $env:AGENT_QWEN_MAX_REVIEWS="20"; $env:AGENT_QWEN_MAX_REVIEWS_PER_DRIVER="2"; $env:AGENT_QWEN_MAX_RANKS="4"
   D:\竞赛\.venv\Scripts\python.exe demo\server\main.py
 ```
 
-让 Codex 审阅（口令更新时间：2026-06-06 03:40 +08:00）：
+让 Codex 审阅（口令更新时间：2026-06-06 12:20 +08:00）：
 
 ```text
 请审阅 deepseek/third-round-optimization 分支最新改动，按审阅规则检查合规性、hardcode、Qwen 调用受控性，以及是否可以合并到 main。

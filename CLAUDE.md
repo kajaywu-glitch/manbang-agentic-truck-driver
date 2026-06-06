@@ -19,12 +19,13 @@
 
 本次更新：自主迭代循环结束，冠军版本稳定。qwen3.5-flash 全功能 + net_per_hour=0.5 + 休息风险折扣 + 增强 rank prompt。
 
-## 当前结论（截至 2026-06-06 03:40 +08:00）
+## 当前结论（截至 2026-06-06 12:20 +08:00）
 
 - 仓库：`D:\竞赛`
 - 当前分支：`deepseek/third-round-optimization`
 - 稳定分支：`main`
-- **最优配置**：`AGENT_ENABLE_QWEN35_FLASH=1`, `AGENT_QWEN_MAX_REVIEWS=20`, 模型 `qwen3.5-flash`
+- **冠军配置**：`AGENT_ENABLE_QWEN35_FLASH=1`, `AGENT_QWEN_MAX_REVIEWS=20`, 模型 `qwen3.5-flash`
+- **合并前审阅修正**：新增每司机 2 次、rank 总计 4 次的默认配额，并修正 Qwen 货源指标和风险校验上下文；等待 CC 下一轮完整仿真确认新成绩。
 
 ### 最终评测结果（全版本对比）
 
@@ -32,8 +33,8 @@
 |------|----------:|------:|----------:|------------------:|
 | 净收入 | 152,769 | 156,140 | 152,927 | **156,973** |
 | 罚分 | 12,070 | 12,955 | 10,395 | 12,955 |
-| Token | 0 | 0 | 5,627 | 60,633 |
-| 耗时 | ~143s | ~146s | ~168s | ~480s |
+| Token | 0 | 0 | 5,627 | **46,149** |
+| 耗时 | ~143s | ~146s | ~168s | 431s |
 
 ### 司机明细（qwen3.5-flash vs 确定性）
 
@@ -282,16 +283,16 @@ set AGENT_ENABLE_QWEN35_FLASH=1
 - D003 月度空驶限额已经明显修好，最近完整结果中空驶 `99.93km`，罚分 0。
 - D009 指定熟货 `240646` 已能接到，熟货罚分 0。
 - D010 家事任务已改为运行时偏好解析路径（2026-05-29 删除 hardcode），`parse_preferences()` 能在偏好可见后正确解析出 `FamilyTask`。
-- Qwen3.5-Flash 已接入主流程但 **不适合当前场景**。详见下方 Qwen 集成测试结论。
+- 以下 Qwen 结论来自早期版本，仅作为历史对照；当前冠军版本已重新启用受控的 rank/suggest/verify。
 
-## Qwen3.5-Flash 集成测试结论（2026-06-06）
+## 历史 Qwen3.5-Flash 集成测试结论（2026-06-06，已被后续版本替代）
 
 ### 代码集成状态
 
 已完成代码集成（`planner.py` + `llm_helper.py` + `preference_rules.py`）：
 
 - `preference_hints()`：偏好结构化，每 driver 调用一次并缓存，~1100 token/driver。**正常工作**。
-- `rank_cargos()`：**已禁用**（代码保留）。每次 ~5000 reasoning token，模型总是确认确定性最高分，不改变决策。
+- `rank_cargos()`：**当时已禁用**（代码保留）。每次 ~5000 reasoning token，模型总是确认确定性最高分，不改变决策。
 - `suggest_decision()`：**保守触发保留**（5 步冷却期，高风险 AND 分数接近才触发）。每次 ~750 token。
 - `apply_qwen_hints()`：偏好解析后调用，只能收紧约束不能放松。
 - 安全降级：模型调用失败时完全回退确定性逻辑。
@@ -321,11 +322,11 @@ set AGENT_ENABLE_QWEN35_FLASH=1
 4. **只在真正不确定时介入**：当确定性分数差距极小（<5%）且有多个合理选择时才调用。
 5. **预计算风险场景**：为 D009 home-night、D010 family、D002/D008 rest 等高风险场景预定义触发规则，让 Qwen 只在规则边界做微调。
 
-### 当前默认配置
+### 当时的默认配置
 
 - `AGENT_ENABLE_QWEN35_FLASH`：默认关闭（`=0`）
 - `AGENT_QWEN_MAX_REVIEWS`：默认 10
-- `rank_cargos`：已禁用（代码保留）
+- `rank_cargos`：当时已禁用（代码保留）
 - `suggest_decision`：保守触发（5 步冷却，高风险 AND 分数接近）
 - `preference_hints`：正常工作（缓存，每 driver 一次）
 
