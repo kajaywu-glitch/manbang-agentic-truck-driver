@@ -92,6 +92,9 @@ class DeterministicPlanner:
         self._qwen_max_ranks = max(0, int(os.environ.get("AGENT_QWEN_MAX_RANKS", "5")))
         self._qwen_rank_gap_ratio = float(os.environ.get("AGENT_QWEN_RANK_MAX_GAP_RATIO", "0.25"))
         self._qwen_suggest_gap_ratio = float(os.environ.get("AGENT_QWEN_SUGGEST_MAX_GAP_RATIO", "0.25"))
+        # P2: category-based budget — general + reserved (family/home_night/high_rest)
+        self._qwen_budget_used: dict[str, int] = {"general": 0, "family": 0, "home_night": 0, "high_rest": 0}
+        self._qwen_budget_limit: dict[str, int] = {"general": 6, "family": 3, "home_night": 2, "high_rest": 4}
         self._step_counter = 0
 
     def decide(self, driver_id: str) -> dict[str, Any]:
@@ -172,14 +175,15 @@ class DeterministicPlanner:
 
         # One model call per decision. Risk verification takes precedence over
         # optional action selection, and each driver gets an independent quota.
-        if self._qwen_review_available(driver_id, cooldown_steps=5):
+        cat = DeterministicPlanner._qwen_category(policy, memory, now_minute)
+        if self._qwen_review_available(driver_id, cooldown_steps=5, category=cat):
             scenario = self._detect_risk_scenario(policy, memory, chosen, now_minute)
             if scenario is not None:
                 verify_ctx = self._build_verification_context(
                     scenario, status, memory, policy, chosen, now_minute, lat, lng,
                 )
                 verification = self._qwen.verify_constraints(driver_id, scenario, verify_ctx)
-                self._record_qwen_review(driver_id, "verify_constraints")
+                self._record_qwen_review(driver_id, "verify_constraints", category=cat)
                 if verification is not None and not verification.get("safe", True):
                     self._logger.warning(
                         "Qwen verification: UNSAFE driver=%s scenario=%s risk=%s concern=%s",
@@ -215,7 +219,7 @@ class DeterministicPlanner:
                     for c in candidates
                 ]
                 model_idx = self._qwen.suggest_decision(driver_id, status, cand_dicts, suggest_ctx)
-                self._record_qwen_review(driver_id, "suggest_decision")
+                self._record_qwen_review(driver_id, "suggest_decision", category=cat)
                 if model_idx is not None and 0 <= model_idx < len(candidates):
                     model_choice = candidates[model_idx]
                     if self._score_gap_ratio(chosen.score, model_choice.score) <= self._qwen_suggest_gap_ratio:
@@ -242,6 +246,10 @@ class DeterministicPlanner:
             chosen.score,
             len(items),
         )
+        # Phase 1 诊断：记录休息状态（不改动作），用于对照 evaluator 违规根因
+        if policy.daily_rest_minutes > 0 and minute_of_day(now_minute) % 120 < 10:
+            self._log_rest_diagnostics(driver_id, policy, memory, now_minute, chosen)
+
         return chosen.action
 
     def _safe_history(self, driver_id: str) -> dict[str, Any]:
@@ -537,7 +545,7 @@ class DeterministicPlanner:
             and not self._verification_has_priority(policy, memory, now_minute)
             and driver_id not in self._qwen_ranked_drivers
             and self._qwen_rank_count < self._qwen_max_ranks
-            and self._qwen_review_available(driver_id, cooldown_steps=10)
+            and self._qwen_review_available(driver_id, cooldown_steps=10, category="general")
         )
         if should_rank:
             constraints = {
@@ -557,7 +565,7 @@ class DeterministicPlanner:
                 for item, plan in top_ranked_plans
             ]
             model_scores = self._qwen.rank_cargos(driver_id, status, cargo_items, constraints)
-            self._record_qwen_review(driver_id, "rank_cargos")
+            self._record_qwen_review(driver_id, "rank_cargos", category="general")
             self._qwen_ranked_drivers.add(driver_id)
             self._qwen_rank_count += 1
             if model_scores:
@@ -1039,6 +1047,31 @@ class DeterministicPlanner:
             latest_start = min(latest_start, min(late_overnight_starts))
         return max(0, latest_start)
 
+    @staticmethod
+    def _log_rest_diagnostics(
+        driver_id: str,
+        policy: PreferencePolicy,
+        memory: DriverMemory,
+        now_minute: int,
+        chosen: Candidate,
+    ) -> None:
+        """Phase 1 diagnosis: log rest state for later comparison with evaluator."""
+        import logging
+        _log = logging.getLogger("agent.rest_diag")
+        rest_minutes = int(policy.daily_rest_minutes or 0)
+        today = now_minute // DAY_MINUTES
+        longest_today = memory.longest_rest_for_day(today)
+        gap_today = max(0, rest_minutes - longest_today)
+        yesterday_longest = memory.longest_rest_for_day(today - 1) if today > 0 else 0
+        yesterday_gap = max(0, rest_minutes - yesterday_longest)
+        action_type = chosen.action.get("action", "?")
+        _log.info(
+            "REST_DIAG driver=%s day=%d now=%d longest_today=%d gap=%d "
+            "yesterday_longest=%d yesterday_gap=%d action=%s",
+            driver_id, today, now_minute, longest_today, gap_today,
+            yesterday_longest, yesterday_gap, action_type,
+        )
+
     # ------------------------------------------------------------------
     # Qwen constraint detection (post-decision)
     # ------------------------------------------------------------------
@@ -1184,35 +1217,38 @@ class DeterministicPlanner:
 
         return None
 
-    def _qwen_review_available(self, driver_id: str, *, cooldown_steps: int) -> bool:
+    def _qwen_review_available(self, driver_id: str, *, cooldown_steps: int, category: str = "general") -> bool:
         if not self._qwen.enabled or self._qwen_review_count >= self._qwen_max_reviews:
             return False
         driver_count = self._qwen_review_counts_by_driver.get(driver_id, 0)
         if driver_count >= self._qwen_max_reviews_per_driver:
             return False
         last_step = self._qwen_last_call_step_by_driver.get(driver_id, -999)
-        return self._step_counter - last_step >= cooldown_steps
+        if self._step_counter - last_step < cooldown_steps:
+            return False
+        limit = self._qwen_budget_limit.get(category, 0)
+        used = self._qwen_budget_used.get(category, 0)
+        return used < limit
 
     @staticmethod
-    def _verification_has_priority(
-        policy: PreferencePolicy,
-        memory: DriverMemory,
-        now_minute: int,
-    ) -> bool:
+    def _qwen_category(policy: PreferencePolicy, memory: DriverMemory, now_minute: int) -> str:
         if policy.family_task is not None and now_minute >= policy.family_task.start_minute - 48 * 60:
-            return True
+            return "family"
         if policy.home_night is not None and minute_of_day(now_minute) >= 15 * 60:
-            return True
-        return policy.daily_rest_minutes > 0 and needs_rest_today(policy, memory, now_minute) > 0
+            return "home_night"
+        if policy.daily_rest_minutes > 0 and needs_rest_today(policy, memory, now_minute) > 0:
+            return "high_rest"
+        return "general"
 
-    def _record_qwen_review(self, driver_id: str, review_type: str) -> None:
+    def _record_qwen_review(self, driver_id: str, review_type: str, category: str = "general") -> None:
         self._qwen_review_count += 1
         self._qwen_review_counts_by_driver[driver_id] = (
             self._qwen_review_counts_by_driver.get(driver_id, 0) + 1
         )
         self._qwen_last_call_step_by_driver[driver_id] = self._step_counter
+        self._qwen_budget_used[category] = self._qwen_budget_used.get(category, 0) + 1
         self._logger.info(
-            "Qwen review recorded driver=%s type=%s driver_count=%s total_count=%s",
+            "Qwen review driver=%s type=%s cat=%s drv_n=%s tot=%s budget=%s",
             driver_id,
             review_type,
             self._qwen_review_counts_by_driver[driver_id],
