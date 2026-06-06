@@ -318,9 +318,9 @@ class DeterministicPlanner:
                 if dist > visit.radius_km and dist <= 120 and self._active_allowed(policy, now_minute, now_minute + distance_to_minutes(dist)):
                     return {"action": "reposition", "params": {"latitude": visit.lat, "longitude": visit.lng}}
 
-        # === 架构重构：前置休息调度 ===
-        # 不再被动等待预触发窗口，而是在每天前半段主动安排休息块，
-        # 确保休息在 cargo 干扰之前完成。
+        # === P1: 机会成本感知休息调度 ===
+        # 移除静态上午休息；只保留清晨延续、下午预触发和硬截止。
+        # 货源级休息可行性检查在 _evaluate_cargo 中完成。
         rest_remaining = needs_rest_today(policy, memory, now_minute)
         if rest_remaining > 0:
             rest_minutes = int(policy.daily_rest_minutes or 0)
@@ -333,28 +333,19 @@ class DeterministicPlanner:
                     if abs(last.step_end - now_minute) <= 10:
                         return self._wait(max(60, min(rest_minutes, day_end(now_minute) - now_minute)))
 
-            # Phase 2: 上午主动休息 — 仅适用于短休息需求（≤4h），
-            # 在前半天完成短休息块，避免下午 cargo 压缩。长休息（8h）不动。
-            if mod < 12 * 60 and rest_minutes <= 240 and rest_remaining >= rest_minutes * 0.6:
-                return self._wait(max(60, min(rest_minutes, day_end(now_minute) - now_minute)))
-
-            # Phase 3: 下午被动触发（原有逻辑）
+            # Phase 2: 下午被动触发（原有逻辑）
             pre_trigger = max(240, rest_minutes)
-
             latest_start = self._latest_rest_start(policy, now_minute)
-            mod = minute_of_day(now_minute)
             if mod >= latest_start - pre_trigger:
                 duration = max(60, min(policy.daily_rest_minutes, day_end(now_minute) - now_minute))
                 return self._wait(duration)
 
-            # 硬截止：当天剩余时间不足以完成所需连续休息时，立即开始休息
-            # 这是最后防线，防止 cargo 查询消耗时间导致错过休息窗口
+            # Phase 3: 硬截止 — 当天剩余时间不足，立即休息
             today_remain = max(0, day_end(now_minute) - now_minute)
             if today_remain <= rest_minutes + 30 and rest_remaining >= rest_minutes * 0.5:
-                duration = max(60, min(policy.daily_rest_minutes, today_remain))
-                return self._wait(duration)
+                return self._wait(max(60, min(policy.daily_rest_minutes, today_remain)))
 
-            # 如果当前正在休息中（最近动作是 wait >= 60 分钟），不打断
+            # 如果当前正在休息中，不打断
             if memory.records:
                 last = memory.records[-1]
                 if last.action_name == "wait" and last.action_exec_cost >= 60:
@@ -789,21 +780,18 @@ class DeterministicPlanner:
         net_per_hour = base_net / (total_minutes / 60.0)
         score = base_net + 0.6 * net_per_hour - pickup_km * 0.35 - wait_minutes * 0.08
 
-        # Rest compatibility incentive: when rest is needed, strongly prefer
-        # cargos that finish early with ample rest margin.
-        if policy.daily_rest_minutes > 0 and needs_rest_today(policy, memory, now_minute) > 0:
-            latest_rs = self._latest_rest_start(policy, now_minute)
-            finish_mod = minute_of_day(finish)
-            margin = latest_rs - finish_mod
-            if margin > 180:
-                # Cargo finishes >3h before rest deadline — strong bonus
-                score += min(50, margin * 0.2)
-            elif margin > 60:
-                # Moderate margin — mild bonus
-                score += margin * 0.1
-            else:
-                # Tight margin — penalty
-                score -= (60 - margin) * 0.3
+        # P1: 机会成本感知休息可行性 — 对每个货源投影完工后能否完成连续休息。
+        # 若不能且预计罚分超过货源净收益 50%，拒绝货源（休息更划算）。
+        if policy.daily_rest_minutes > 0 and not is_required_cargo:
+            rest_needed = needs_rest_today(policy, memory, now_minute)
+            if rest_needed > 0:
+                rest_feasible, rest_penalty_est = self._rest_feasibility(
+                    policy, now_minute, finish, rest_needed,
+                )
+                if not rest_feasible and rest_penalty_est > base_net * 0.5:
+                    return None
+                if not rest_feasible:
+                    score -= rest_penalty_est * 0.2
 
         # Risk-Gated MPC: penalty_risk 估算 — 接单后是否还能满足硬约束
         penalty_risk = self._estimate_penalty_risk(
@@ -1038,6 +1026,38 @@ class DeterministicPlanner:
         if late_overnight_starts:
             latest_start = min(latest_start, min(late_overnight_starts))
         return max(0, latest_start)
+
+    @staticmethod
+    def _rest_feasibility(
+        policy: PreferencePolicy,
+        now_minute: int,
+        finish_minute: int,
+        rest_needed: int,
+    ) -> tuple[bool, float]:
+        """Check if a full continuous rest block is possible after cargo completion.
+
+        Returns (feasible, estimated_penalty).
+        Feasible: the remaining time today after cargo finish is >= rest_needed.
+        Penalty estimate: based on typical per-violation cost (200-400).
+        """
+        rest_minutes = int(policy.daily_rest_minutes or 0)
+        remaining = max(0, day_end(now_minute) - finish_minute)
+        feasible = remaining >= rest_minutes
+
+        # Estimate penalty: typical violation cost scales with rest duration
+        # Short rest (3-4h): ~300/violation. Long rest (5-8h): ~200/violation.
+        per_violation = 200.0 if rest_minutes >= 300 else 300.0
+        if policy.daily_rest_weekdays_only:
+            per_violation *= 0.7  # Fewer violation days → lower total penalty
+
+        if feasible:
+            return True, 0.0
+
+        # Not feasible: estimate penalty as fraction of per-violation cost
+        # based on how much rest would be missing
+        shortfall_ratio = (rest_minutes - remaining) / max(1, rest_minutes)
+        estimated = per_violation * shortfall_ratio
+        return False, estimated
 
     # ------------------------------------------------------------------
     # Qwen constraint detection (post-decision)
