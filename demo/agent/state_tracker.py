@@ -52,6 +52,22 @@ class DriverMemory:
     def longest_rest_today(self, now_minute: int) -> int:
         return self.longest_rest_for_day(now_minute // DAY_MINUTES)
 
+    def recent_avg_cargo_net(self, last_n: int = 3) -> float:
+        """Average net income of the last N accepted orders. Returns 0 if none."""
+        nets: list[float] = []
+        for rec in reversed(self.records):
+            if rec.action_name != "take_order" or not rec.result.get("accepted"):
+                continue
+            price = float(rec.params.get("price", 0) or 0)
+            pickup = float(rec.result.get("pickup_deadhead_km", 0) or 0)
+            haul = float(rec.result.get("haul_distance_km", 0) or 0)
+            nets.append(price - (pickup + haul) * 1.5)
+            if len(nets) >= last_n:
+                break
+        if not nets:
+            return 0.0
+        return sum(nets) / len(nets)
+
     def longest_rest_for_day(self, day: int) -> int:
         return merged_longest_span(self.wait_intervals_by_day.get(day, []))
 
