@@ -346,17 +346,24 @@ def _parse_rest(text: str, policy: PreferencePolicy) -> None:
 
 
 def _parse_quiet_window(text: str, policy: PreferencePolicy) -> None:
-    if not any(k in text for k in ("不接单", "不空", "不空车")):
+    if not any(k in text for k in ("不接单", "不空", "不空车", "熄火", "睡觉", "停车歇", "雷打不动")):
         return
+    # Arabic: "23点至次日4点"
     for match in re.finditer(r"(\d{1,2})点至(?:次日)?(?:当天)?(?:早|凌晨|上午|下午|中午)?(\d{1,2})点", text):
         start = int(match.group(1))
         end = int(match.group(2))
         if "下午" in text and end < 12:
             end += 12
-        if "中午" in text and start == 12 and end <= 2:
-            end += 12
         if start <= 24 and end <= 24:
             policy.quiet_windows.append(QuietWindow(start * 60, (end % 24) * 60))
+    # Chinese: "零点以后到早上六点"
+    cn_hour = {"零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+    m = re.search(r"([零一二两三四五六七八九十]+)点(?:以后)?(?:到|至)(?:早上|上午|凌晨)?([零一二两三四五六七八九十]+)点", text)
+    if m:
+        s = cn_hour.get(m.group(1), -1)
+        e = cn_hour.get(m.group(2), -1)
+        if 0 <= s <= 24 and 0 <= e <= 24:
+            policy.quiet_windows.append(QuietWindow(s * 60, e * 60))
 
 
 def _parse_distance_limits(text: str, policy: PreferencePolicy) -> None:
