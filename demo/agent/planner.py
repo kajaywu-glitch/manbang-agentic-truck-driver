@@ -341,7 +341,12 @@ class DeterministicPlanner:
                     if abs(last.step_end - now_minute) <= 10:
                         return self._wait(max(60, min(rest_minutes, day_end(now_minute) - now_minute)))
 
-            # Phase 2: 下午被动触发（原有逻辑）
+            # Phase 2: 上午主动休息 — 仅适用于短休息需求（≤4h），
+            # 在前半天完成短休息块，避免下午 cargo 压缩。长休息（8h）不动。
+            if mod < 12 * 60 and rest_minutes <= 240 and rest_remaining >= rest_minutes * 0.85:
+                return self._wait(max(60, min(rest_minutes, day_end(now_minute) - now_minute)))
+
+            # Phase 3: 下午被动触发（原有逻辑）
             pre_trigger = max(240, rest_minutes)
 
             latest_start = self._latest_rest_start(policy, now_minute)
