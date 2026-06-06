@@ -334,12 +334,9 @@ class DeterministicPlanner:
                     if abs(last.step_end - now_minute) <= 10:
                         return self._wait(max(60, min(rest_minutes, day_end(now_minute) - now_minute)))
 
-            # Phase 2: 上午主动休息 — 短休息需求（≤4h）在前半天完成。
-            # 逃逸条件：若近期货源收益高（≥120/单），跳过休息继续接单。
-            recent_avg = memory.recent_avg_cargo_net(last_n=3)
+            # Phase 2: 上午主动休息 — 短休息需求（≤4h）在前半天完成
             if mod < 12 * 60 and rest_minutes <= 240 and rest_remaining >= rest_minutes * 0.6:
-                if recent_avg < 120:
-                    return self._wait(max(60, min(rest_minutes, day_end(now_minute) - now_minute)))
+                return self._wait(max(60, min(rest_minutes, day_end(now_minute) - now_minute)))
 
             # Phase 3: 下午被动触发
             pre_trigger = max(240, rest_minutes)
