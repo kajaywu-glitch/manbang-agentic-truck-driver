@@ -343,7 +343,7 @@ class DeterministicPlanner:
 
             # Phase 2: 上午主动休息 — 仅适用于短休息需求（≤4h），
             # 在前半天完成短休息块，避免下午 cargo 压缩。长休息（8h）不动。
-            if mod < 12 * 60 and rest_minutes <= 240 and rest_remaining >= rest_minutes * 0.6:
+            if mod < 12 * 60 and rest_minutes <= 240 and rest_remaining >= rest_minutes * 0.85:
                 return self._wait(max(60, min(rest_minutes, day_end(now_minute) - now_minute)))
 
             # Phase 3: 下午被动触发（原有逻辑）
