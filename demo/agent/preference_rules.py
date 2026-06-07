@@ -587,7 +587,38 @@ def _coords(text: str) -> list[tuple[float, float]]:
 
 def _first_number_before_km(text: str) -> float | None:
     match = re.search(r"([0-9.]+)\s*公里", text)
-    return float(match.group(1)) if match else None
+    if match:
+        return float(match.group(1))
+    # Chinese numerals: "五十五公里" → 55
+    m = re.search(r"([零一二三四五六七八九十百千万两]+)\s*公里", text)
+    if m:
+        return float(_cn_numeral_to_int(m.group(1)))
+    return None
+
+
+def _cn_numeral_to_int(cn: str) -> int:
+    """Convert Chinese numeral string to int. '五十五'→55, '一百二十'→120."""
+    if cn.isdigit():
+        return int(cn)
+    val = 0
+    section = 0
+    for ch in cn:
+        if ch in ("零",):
+            continue
+        if ch in ("十",):
+            section = max(section, 1) * 10
+            val += section; section = 0
+        elif ch in ("百",):
+            section *= 100; val += section; section = 0
+        elif ch in ("千",):
+            section *= 1000; val += section; section = 0
+        elif ch in ("万",):
+            section *= 10000; val += section; section = 0
+        else:
+            d = {"一":1,"二":2,"两":2,"三":3,"四":4,"五":5,"六":6,"七":7,"八":8,"九":9}.get(ch, 0)
+            section = section + d
+    val += section
+    return val if val > 0 else 1
 
 
 def _first_int(text: str) -> int | None:
