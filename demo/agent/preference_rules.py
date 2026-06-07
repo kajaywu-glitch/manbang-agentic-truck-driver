@@ -336,9 +336,12 @@ def _parse_cargo_names(text: str, policy: PreferencePolicy) -> None:
     elif names and ("尽量不拉" in text or "尽量不接" in text):
         policy.soft_avoid_cargo_names.update(names)
     # Unbracketed: always try this path too
-    m = re.search(r"([一-鿿]{2,4})(?:货源|这类活儿|这类货|这一类|的货|订单)", text)
-    if m and any(w in text for w in ("不接", "不拉", "不干", "推掉", "干不了", "搞不了", "一律推", "每接一次都扣", "凡是", "赔不起")):
-        policy.forbidden_cargo_names.add(m.group(1))
+    m = re.search(r"([一-鿿]{2,3})(?:货源|这类活儿|这类货|这一类|的货|订单|这个|这路)", text)
+    neg = any(w in text for w in ("不接", "不拉", "不干", "推掉", "干不了", "搞不了", "一律推", "每接", "凡是", "赔不起", "扣钱"))
+    if m and neg:
+        name = m.group(1)
+        if len(name) >= 2 and name not in ("凡是", "地在", "都在", "货在"):
+            policy.forbidden_cargo_names.add(name)
 
 
 def _parse_rest(text: str, policy: PreferencePolicy) -> None:
@@ -490,7 +493,7 @@ def _parse_cargo_region_forbid(text: str, policy: PreferencePolicy) -> None:
     has_negative = any(w in text for w in ["不接", "不往", "不进", "推掉", "不拉", "不干", "一律不", "都扣", "每接一次都"])
     if not has_negative:
         return
-    m = re.search(r"(?:装货地?或卸货地?在|起点或终点涉及)\s*([一-鿿]{2,8})(?:的货|的货源)", text)
+    m = re.search(r"(?:装货地?或卸货地?在|起点或终点涉及)\s*([一-鿿]{2,4})(?:的货|的货源)", text)
     if m:
         city = m.group(1)
         # Safety: don't add city if the text also describes it positively (required region)
