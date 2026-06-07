@@ -282,6 +282,29 @@ class DeterministicPlanner:
                 if travel_to_pickup + family.pickup_wait_minutes > time_remaining * 0.6:
                     return {"action": "reposition", "params": {"latitude": family.pickup_lat, "longitude": family.pickup_lng}}
 
+        # 约会任务：指定时间窗口内必须到达并停留
+        for appt in policy.appointments:
+            if appt.start_minute <= now_minute < appt.end_minute:
+                dist = haversine_km(lat, lng, appt.lat, appt.lng)
+                if dist > 5 and self._active_allowed(policy, now_minute, now_minute + distance_to_minutes(dist)):
+                    return {"action": "reposition", "params": {"latitude": appt.lat, "longitude": appt.lng}}
+                if not memory.has_waited_at(appt.lat, appt.lng, 5.0, appt.start_minute, appt.duration_minutes):
+                    return self._wait(appt.duration_minutes)
+            if now_minute >= appt.start_minute - 6 * 60 and now_minute < appt.start_minute:
+                dist = haversine_km(lat, lng, appt.lat, appt.lng)
+                if dist > 80 and self._active_allowed(policy, now_minute, now_minute + distance_to_minutes(dist)):
+                    return {"action": "reposition", "params": {"latitude": appt.lat, "longitude": appt.lng}}
+
+        # 路线序列：截止前赶往 waypoint
+        for seq in policy.route_sequences:
+            for wp_lat, wp_lng, _label, deadline in seq.waypoints:
+                if deadline is not None:
+                    dist = haversine_km(lat, lng, wp_lat, wp_lng)
+                    travel = distance_to_minutes(dist)
+                    if now_minute + travel > deadline - 120:
+                        if self._active_allowed(policy, now_minute, now_minute + travel):
+                            return {"action": "reposition", "params": {"latitude": wp_lat, "longitude": wp_lng}}
+
         required_cargo = policy.required_cargo
         if required_cargo is not None and not memory.has_taken_cargo(required_cargo.cargo_id):
             action = self._required_cargo_positioning(required_cargo, now_minute, lat, lng, policy)
@@ -635,9 +658,21 @@ class DeterministicPlanner:
         if truck_length and isinstance(truck_options, list) and truck_length not in {str(v) for v in truck_options}:
             return None
         cargo_name = str(cargo.get("cargo_name") or "").strip()
-        if cargo_name in policy.forbidden_cargo_names:
+        cargo_category = str(cargo.get("cargo_category", "") or "")
+        if cargo_name in policy.forbidden_cargo_names or cargo_category in policy.forbidden_cargo_names:
             return None
         start = cargo.get("start") if isinstance(cargo.get("start"), dict) else {}
+        end = cargo.get("end") if isinstance(cargo.get("end"), dict) else {}
+        # 城市/区域禁运
+        sc = str(start.get("city", "") or "")
+        ec = str(end.get("city", "") or "")
+        for region in policy.forbidden_cargo_regions:
+            if region in sc or region in ec:
+                return None
+        for ban in policy.time_limited_region_bans:
+            if ban.start_minute <= now_minute <= ban.end_minute:
+                if ban.city_keyword in sc or ban.city_keyword in ec:
+                    return None
         end = cargo.get("end") if isinstance(cargo.get("end"), dict) else {}
         try:
             start_lat = float(start["lat"])

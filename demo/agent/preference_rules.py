@@ -77,9 +77,32 @@ class RequiredCargo:
     end_minute: int | None
 
 
+@dataclass(frozen=True)
+class TimeLimitedRegionBan:
+    start_minute: int
+    end_minute: int
+    city_keyword: str
+
+@dataclass(frozen=True)
+class AppointmentTask:
+    start_minute: int
+    end_minute: int
+    lat: float
+    lng: float
+    duration_minutes: int
+    penalty_amount: float
+
+@dataclass(frozen=True)
+class RouteSequence:
+    waypoints: list[tuple[float, float, str, int | None]]  # (lat, lng, label, deadline_minute)
+    penalty_amount: float
+
+
 @dataclass
 class PreferencePolicy:
     forbidden_cargo_names: set[str] = field(default_factory=set)
+    # New: city-level cargo region bans
+    forbidden_cargo_regions: set[str] = field(default_factory=set)
     soft_avoid_cargo_names: set[str] = field(default_factory=set)
     max_haul_km: float | None = None
     max_pickup_km: float | None = None
@@ -88,12 +111,16 @@ class PreferencePolicy:
     daily_rest_weekdays_only: bool = False
     no_order_days_required: int = 0
     off_days_required: int = 0
+    off_days_penalty: float = 0.0  # New: penalty for missing off-days
     daily_max_orders: int | None = None
     first_order_latest_minute: int | None = None
     quiet_windows: list[QuietWindow] = field(default_factory=list)
     bounds: tuple[float, float, float, float] | None = None
     forbidden_zones: list[ForbiddenZone] = field(default_factory=list)
     required_visits: list[RequiredVisit] = field(default_factory=list)
+    time_limited_region_bans: list[TimeLimitedRegionBan] = field(default_factory=list)  # New
+    appointments: list[AppointmentTask] = field(default_factory=list)  # New
+    route_sequences: list[RouteSequence] = field(default_factory=list)  # New
     home_night: HomeNightRule | None = None
     family_task: FamilyTask | None = None
     required_cargo: RequiredCargo | None = None
@@ -124,6 +151,18 @@ def parse_preferences(preferences: list[Any]) -> PreferencePolicy:
         _parse_geo_rules(text, policy)
         _parse_required_cargo(text, item, policy)
         _parse_family_task(text, item, policy)
+        # 20260529 新偏好类型
+        _parse_cargo_region_forbid(text, policy)
+        _parse_time_limited_region_ban(text, item, policy)
+        _parse_off_days_penalty(text, item, policy)
+        _parse_required_region_days(text, item, policy)
+        _parse_appointment(text, item, policy)
+        _parse_route_sequence(text, item, policy)
+    # Cross-reference: fill missing appointment coordinates from required_visits
+    for appt in policy.appointments:
+        if appt.lat == 0.0 and appt.lng == 0.0 and policy.required_visits:
+            appt = AppointmentTask(appt.start_minute, appt.end_minute, policy.required_visits[0].lat, policy.required_visits[0].lng, appt.duration_minutes, appt.penalty_amount)
+            policy.appointments = [a for a in policy.appointments if not (a.lat == 0.0 and a.lng == 0.0)] + [appt]
     return policy
 
 
@@ -231,7 +270,14 @@ def should_preserve_off_day(policy: PreferencePolicy, memory: DriverMemory, now_
     done = memory.completed_off_days(now_minute)
     if done >= needed:
         return False
-    return memory.active_minutes_today(now_minute) == 0
+    if memory.active_minutes_today(now_minute) > 0:
+        # Allow early-morning off-day even with cross-night cargo minutes
+        if minute_of_day(now_minute) >= 120:
+            return False
+    still_needed = needed - done
+    days_remaining = MONTH_HORIZON_MINUTES // DAY_MINUTES - (now_minute // DAY_MINUTES)
+    # More proactive: force off-day with 10-day buffer to ensure compliance
+    return days_remaining <= still_needed + 10
 
 
 def should_preserve_no_order_day(policy: PreferencePolicy, memory: DriverMemory, now_minute: int) -> bool:
@@ -283,15 +329,19 @@ def _preference_text(item: Any) -> str:
 
 
 def _parse_cargo_names(text: str, policy: PreferencePolicy) -> None:
-    if "货源品类" not in text:
-        return
+    # Bracketed: 「机械设备」
     names = set(re.findall(r"「([^」]+)」", text))
-    if not names:
-        return
-    if "不接" in text:
+    if names and ("不接" in text or "不拉" in text or "不干" in text or "推掉" in text):
         policy.forbidden_cargo_names.update(names)
-    elif "尽量不拉" in text or "尽量不接" in text:
+    elif names and ("尽量不拉" in text or "尽量不接" in text):
         policy.soft_avoid_cargo_names.update(names)
+    # Unbracketed: always try this path too
+    m = re.search(r"([一-鿿]{2,3})(?:货源|这类活儿|这类货|这一类|的货|订单|这个|这路)", text)
+    neg = any(w in text for w in ("不接", "不拉", "不干", "推掉", "干不了", "搞不了", "一律推", "每接", "凡是", "赔不起", "扣钱"))
+    if m and neg:
+        name = m.group(1)
+        if len(name) >= 2 and name not in ("凡是", "地在", "都在", "货在"):
+            policy.forbidden_cargo_names.add(name)
 
 
 def _parse_rest(text: str, policy: PreferencePolicy) -> None:
@@ -307,17 +357,24 @@ def _parse_rest(text: str, policy: PreferencePolicy) -> None:
 
 
 def _parse_quiet_window(text: str, policy: PreferencePolicy) -> None:
-    if not any(k in text for k in ("不接单", "不空", "不空车")):
+    if not any(k in text for k in ("不接单", "不空", "不空车", "熄火", "睡觉", "停车歇", "雷打不动")):
         return
+    # Arabic: "23点至次日4点"
     for match in re.finditer(r"(\d{1,2})点至(?:次日)?(?:当天)?(?:早|凌晨|上午|下午|中午)?(\d{1,2})点", text):
         start = int(match.group(1))
         end = int(match.group(2))
         if "下午" in text and end < 12:
             end += 12
-        if "中午" in text and start == 12 and end <= 2:
-            end += 12
         if start <= 24 and end <= 24:
             policy.quiet_windows.append(QuietWindow(start * 60, (end % 24) * 60))
+    # Chinese: "零点以后到早上六点"
+    cn_hour = {"零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9, "十": 10}
+    m = re.search(r"([零一二两三四五六七八九十]+)点(?:以后)?(?:到|至)(?:早上|上午|凌晨)?([零一二两三四五六七八九十]+)点", text)
+    if m:
+        s = cn_hour.get(m.group(1), -1)
+        e = cn_hour.get(m.group(2), -1)
+        if 0 <= s <= 24 and 0 <= e <= 24:
+            policy.quiet_windows.append(QuietWindow(s * 60, e * 60))
 
 
 def _parse_distance_limits(text: str, policy: PreferencePolicy) -> None:
@@ -429,6 +486,92 @@ def _parse_family_task(text: str, item: Any, policy: PreferencePolicy) -> None:
         home_deadline_minute=deadline,
         stay_until_minute=stay_until,
     )
+
+
+def _parse_cargo_region_forbid(text: str, policy: PreferencePolicy) -> None:
+    """装货地或卸货地在XX的货，我一律不接 / 起点或终点涉及XX"""
+    has_negative = any(w in text for w in ["不接", "不往", "不进", "推掉", "不拉", "不干", "一律不", "都扣", "每接一次都"])
+    if not has_negative:
+        return
+    m = re.search(r"(?:装货地?或卸货地?在|起点或终点涉及)\s*([一-鿿]{2,4})(?:的货|的货源)", text)
+    if m:
+        city = m.group(1)
+        # Safety: don't add city if the text also describes it positively (required region)
+        if "得接够" not in text and "起码得" not in text and "至少" not in text.replace(city, ""):
+            policy.forbidden_cargo_regions.add(city)
+
+
+def _parse_time_limited_region_ban(text: str, item: Any, policy: PreferencePolicy) -> None:
+    """三月四号五号交警在深圳查车，这天我不往深圳跑"""
+    m = re.search(r"([^，]+)(?:交警|查车|不往)([一-鿿]{2,6})(?:跑|去|进)", text)
+    if m:
+        city = m.group(2)
+        start = wall_time_to_minutes(str(item.get("start_time", ""))) if isinstance(item, dict) else None
+        end = wall_time_to_minutes(str(item.get("end_time", ""))) if isinstance(item, dict) else None
+        if start is not None and end is not None:
+            policy.time_limited_region_bans.append(TimeLimitedRegionBan(start, end, city))
+
+
+def _parse_off_days_penalty(text: str, item: Any, policy: PreferencePolicy) -> None:
+    """三月怎么也得抽三个整天完全歇着 / 起码留两个整天停驶检修 / 别给我排活"""
+    m = re.search(r"(?:抽|留|至少|起码)[一-鿿]*?([一-鿿0-9]+)个?整[天日]\s*(?:完全歇着|停驶|歇着|别排活|不进)", text)
+    if m:
+        count = _chinese_or_int(m.group(1))
+        if isinstance(item, dict) and count > 0:
+            penalty = float(item.get("penalty_amount", 0) or 0)
+            policy.off_days_required = max(policy.off_days_required, count)
+            policy.off_days_penalty = max(policy.off_days_penalty, penalty)
+
+
+def _parse_required_region_days(text: str, item: Any, policy: PreferencePolicy) -> None:
+    """装货或卸货在增城的货，起码得接够四个不同的日子"""
+    m = re.search(r"(?:装货|卸货|装货或卸货)在([一-鿿]{2,6})(?:的货)?[,，\s]*起码得接够|至少.*?接够|接够\s*([一-鿿0-9]+)\s*个?不同的?(?:自然)?日", text)
+    if not m:
+        m = re.search(r"在([一-鿿]{2,6})(?:的货)[,，\s]*起码得接够|至少.*?接够\s*([一-鿿0-9]+)\s*个?", text)
+    if m:
+        city = m.group(1)
+        count = _chinese_or_int(m.group(2) if m.lastindex >= 2 else "1")
+        coords_list = _coords(text)
+        lat, lng = coords_list[0] if coords_list else (0.0, 0.0)
+        if count > 0:
+            policy.required_visits.append(RequiredVisit(lat=lat, lng=lng, radius_km=30.0, days_required=count))
+
+
+def _parse_appointment(text: str, item: Any, policy: PreferencePolicy) -> None:
+    """单次停留任务：X月X日到XX停一趟，花X小时 / 到XX连续停留至少X分钟"""
+    m = re.search(r"(?:到|在)\s*([一-鿿]{2,8})(?:城区|区|县|市)?\s*(?:停一趟|停留|停)\s*[,，]?\s*(?:花|至少|停留?)\s*([一-鿿0-9]+)\s*(?:小时|个钟|分钟)", text)
+    if not m:
+        m = re.search(r"连续停留至少\s*(\d+)\s*分钟", text)
+    if m:
+        dur_str = m.group(2) if m.lastindex >= 2 else m.group(1)
+        if "小时" in text or "个钟" in text:
+            duration = _chinese_or_int(dur_str) * 60
+        else:
+            duration = int(dur_str) if dur_str.isdigit() else _chinese_or_int(dur_str)
+        coords_list = _coords(text)
+        lat, lng = coords_list[0] if coords_list else (0.0, 0.0)
+        start = wall_time_to_minutes(str(item.get("start_time", ""))) if isinstance(item, dict) else None
+        end = wall_time_to_minutes(str(item.get("end_time", ""))) if isinstance(item, dict) else None
+        if start is not None and end is not None:
+            policy.appointments.append(AppointmentTask(start, end, lat, lng, duration, float(item.get("penalty_amount", 0) or 0)))
+
+
+def _parse_route_sequence(text: str, item: Any, policy: PreferencePolicy) -> None:
+    """多站顺序任务：先过X捎上Y，12点前赶到Z赴宴到下午2点"""
+    if "先" in text and ("再" in text or "然后" in text or "赶到" in text):
+        coords_list = _coords(text)
+        if len(coords_list) >= 2:
+            deadline_str = re.search(r"(\d{1,2})点[前以之]|中午(\d{1,2})点", text)
+            deadline_hour = None
+            if deadline_str:
+                dl = deadline_str.group(1) or deadline_str.group(2)
+                deadline_hour = int(dl) * 60 if dl else None
+            waypoints = []
+            for i, (lat, lng) in enumerate(coords_list):
+                label = f"wp_{i}"
+                waypoints.append((lat, lng, label, deadline_hour if i == len(coords_list) - 1 else None))
+            penalty = float(item.get("penalty_amount", 0) or 0) if isinstance(item, dict) else 0.0
+            policy.route_sequences.append(RouteSequence(waypoints, penalty))
 
 
 def _coords(text: str) -> list[tuple[float, float]]:
