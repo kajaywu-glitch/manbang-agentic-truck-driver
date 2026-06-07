@@ -362,7 +362,7 @@ class DeterministicPlanner:
                 return self._wait(max(60, min(rest_minutes, day_end(now_minute) - now_minute)))
 
             # Phase 3: 下午被动触发（原有逻辑）
-            pre_trigger = max(240, rest_minutes)
+            pre_trigger = max(240, min(rest_minutes, 360))  # cap at 6h for 8h rest
 
             latest_start = self._latest_rest_start(policy, now_minute)
             mod = minute_of_day(now_minute)

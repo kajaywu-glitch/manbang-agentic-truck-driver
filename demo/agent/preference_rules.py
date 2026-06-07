@@ -271,8 +271,9 @@ def should_preserve_off_day(policy: PreferencePolicy, memory: DriverMemory, now_
     if done >= needed:
         return False
     if memory.active_minutes_today(now_minute) > 0:
-        return False
-    # Only force off-day when remaining days are tight
+        # Allow early-morning off-day even with cross-night cargo minutes
+        if minute_of_day(now_minute) >= 120:
+            return False
     still_needed = needed - done
     days_remaining = MONTH_HORIZON_MINUTES // DAY_MINUTES - (now_minute // DAY_MINUTES)
     # More proactive: force off-day with 10-day buffer to ensure compliance
