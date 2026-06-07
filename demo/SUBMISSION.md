@@ -1,97 +1,24 @@
-# 提交说明
+# Submission Contents
 
-## 提交内容
+This package contains the competition `demo/` root with:
 
-- `demo/agent/` — 核心决策代码（6 个 Python 模块）
-- `demo/results/` — 31 天仿真结果（初赛需要；复赛不包含）
+- `agent/`: the submitted decision agent.
+- `results/`: the latest public-dataset trace and summaries for D001/D002.
 
-## 算法策略
+It intentionally excludes:
 
-**Risk-Gated MPC（风险门控滚动规划）+ 稀疏 Qwen3.5-Flash 顾问**
+- `server/` and `server/data/`
+- local configuration and API keys
+- runtime logs and historical runs
+- Python bytecode caches
 
-### 核心架构
+Validated local result:
 
-```
-ModelDecisionService.decide(driver_id)
-  ├── 紧急约束检查（家事/home-night/安静窗口/休息日/必访点）
-  │   └── 家事：6h 强制前往 + 48h 前瞻预警 + 通用完成时间检查
-  ├── 主动休息日前瞻
-  ├── query_cargo（消耗仿真时间）
-  ├── 后紧急约束检查
-  ├── 最优货源选择（_best_cargo_plan）
-  │   ├── 指定熟货优先
-  │   ├── 逐候选评估（_evaluate_cargo）
-  │   │   ├── 车型/装货窗/禁运/越界/距离过滤
-  │   │   ├── home_night 时间窗约束（16:00/18:00/20:00 分级）
-  │   │   ├── 休息保障（当天剩余时间不足 → 拒绝）
-  │   │   ├── 家事窗口保护（完成+赶路 > 家事开始-2h → 拒绝）
-  │   │   ├── Risk-Gated MPC 罚分风险估算
-  │   │   └── 评分：净收益 + 时间效率 - 空驶成本 - 等待 - 罚分风险 + 目的地机会
-  │   └── 可选 Qwen 融合评分（高风险+候选不确定时）
-  ├── 等待候选（_wait_candidate）
-  ├── 空驶候选（_reposition_candidate）
-  └── 确定性选择 + 可选 Qwen 复审
-```
+- Dataset release: 2026-05-29
+- Net income: -4,155.48
+- Preference penalty: 46,360
+- Total tokens: 8,619
+- Failed drivers: 0
+- Validation errors: none
 
-### 关键特性
-
-1. **Risk-Gated MPC**：对每个接单候选估算罚分风险（home-night、家事、休息、必访点），风险 ≥ 500 直接拒绝。
-2. **硬约束优先**：家事、home-night、连续休息、熟货、必访点等硬约束在 `query_cargo` 前处理，避免查询耗时切碎窗口。
-3. **家事窗口保护**：48 小时前瞻预警（60% 阈值）+ 6 小时强制前往接人点 + 通用完成时间检查（不论订单何时开始）。
-4. **休息保障**：当天剩余时间不足时拒绝接单，评分函数对休息紧张时段降权。
-5. **稀疏 Qwen 顾问**：只在高风险场景且候选不确定时介入，有冷却期限制，失败自动回退确定性逻辑。
-6. **安全降级**：无 API key 时完全由确定性逻辑驱动，token 用量为 0。
-
-### 评测结果（确定性模式，无 Qwen）
-
-| 指标 | 值 |
-|------|---:|
-| 总净收入 | 152,340.69 元 |
-| 总罚分 | 12,870 元 |
-| 验证错误 | 0 |
-| 仿真崩溃 | 0 |
-| 仿真耗时 | 165.08 秒 |
-
-司机明细：
-
-| 司机 | 净收入 | 罚分 | 主要约束 |
-|------|------:|-----:|---------|
-| D001 | 11,069.08 | 300 | 每日连续休息 8h（深圳范围） |
-| D002 | 18,713.61 | 1,800 | 每日连续休息 4h + 无成交日 |
-| D003 | 829.60 | 0 | 月度空驶 ≤100km |
-| D004 | 15,023.86 | 0 | 首单 ≤12:00 + 每日 ≤3 单 |
-| D005 | 17,051.64 | 0 | 装卸距离 ≤100km |
-| D006 | 18,086.57 | 400 | 每日连续休息 5h + 完全不出车日 |
-| D007 | 19,720.82 | 0 | 23-04 不接单 + 无成交日 |
-| D008 | 21,661.16 | 3,200 | 平日连续休息 4h + 完全不出车日 |
-| D009 | 10,526.21 | 900 | 每日 23:00 前到家 + 熟货 240646 |
-| D010 | 19,658.14 | 6,270 | 家事 3/10-3/13 + 每日休息 3h + 必访点 |
-
-注：仿真存在内在非确定性，单次运行结果可能有 ±5% 波动。
-
-## Qwen 集成
-
-通过 `SimulationApiPort.model_chat_completion()` 调用，支持：
-
-- `preference_hints()`：偏好结构化（缓存，同一偏好只调一次）
-- `rank_cargos()`：货源评分（top 5 候选，alpha=0.35 融合）
-- `suggest_decision()`：候选复审（分数接近 + 高风险时触发）
-
-启用方式：设置环境变量 `AGENT_ENABLE_QWEN35_FLASH=1` 和 `DASHSCOPE_API_KEY`。
-
-## 文件说明
-
-| 文件 | 用途 | 行数 |
-|------|------|-----:|
-| `agent/model_decision_service.py` | 官方入口、动作归一化、异常兜底、进度显示 | ~93 |
-| `agent/planner.py` | Risk-Gated MPC 规划器（核心） | ~930 |
-| `agent/preference_rules.py` | 偏好文本解析 → PreferencePolicy | ~465 |
-| `agent/state_tracker.py` | 从决策历史重建司机状态 | ~190 |
-| `agent/geo.py` | Haversine 距离、时间、区间工具 | ~102 |
-| `agent/llm_helper.py` | Qwen3.5-Flash 集成 | ~262 |
-
-## 已知限制
-
-1. **D010 家事迟到**（~3,570 罚分）：家事偏好在 3/10 10:00 才可见，但司机在之前已接长单，无法提前规避。这是偏好可见性机制的固有限制。
-2. **D002/D006/D008 休息违规**：Agent 倾向于连续接单后安排短休息，而非在接单间插入完整休息。休息策略需要更深层的评分函数重构。
-3. **market_heat 跨步记忆**：当前只在当前决策步内累积，不做跨步持久化。
+The official evaluator must recalculate all scores.
