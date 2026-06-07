@@ -335,12 +335,17 @@ def _parse_cargo_names(text: str, policy: PreferencePolicy) -> None:
         policy.forbidden_cargo_names.update(names)
     elif names and ("尽量不拉" in text or "尽量不接" in text):
         policy.soft_avoid_cargo_names.update(names)
-    # Unbracketed: always try this path too
-    m = re.search(r"([一-鿿]{2,3})(?:货源|这类活儿|这类货|这一类|的货|订单|这个|这路)", text)
-    neg = any(w in text for w in ("不接", "不拉", "不干", "推掉", "干不了", "搞不了", "一律推", "每接", "凡是", "赔不起", "扣钱"))
-    if m and neg:
-        name = m.group(1)
-        if len(name) >= 2 and name not in ("凡是", "地在", "都在", "货在"):
+    # Unbracketed: "XX货源" / "XX这类活儿" — capture 2-4 chars, strip prefix noise
+    m = re.search(r"([一-鿿]{2,4})(?:货源|这类活儿|这类货|这一类|的货|订单)", text)
+    if m:
+        raw = m.group(1)
+        # Strip leading function/preposition words
+        name = raw
+        for prefix in ("凡是", "是", "在", "都在", "地在", "或", "和", "接", "过"):
+            if name.startswith(prefix) and len(name) > len(prefix):
+                name = name[len(prefix):]
+        neg = any(w in text for w in ("不接", "不拉", "不干", "推掉", "干不了", "搞不了", "一律推", "每接", "凡是", "赔不起", "扣钱"))
+        if len(name) >= 2 and neg:
             policy.forbidden_cargo_names.add(name)
 
 
@@ -393,12 +398,14 @@ def _parse_distance_limits(text: str, policy: PreferencePolicy) -> None:
 
 
 def _parse_day_count_rules(text: str, policy: PreferencePolicy) -> None:
+    # Generic: "X个整天" + rest/off keywords
+    if "整天" in text or "整日" in text:
+        count = _first_int(text) or 1
+        if any(w in text for w in ("歇着", "停驶", "不接单", "不排活", "别排活", "完全歇", "静止", "检修", "陪", "不进")):
+            policy.off_days_required = max(policy.off_days_required, count)
     if "自然月" in text and ("整天" in text or "完全歇着" in text or "完全" in text) and ("不接单" in text or "歇着" in text):
         count = _first_int(text) or 1
-        if "不空" in text or "完全" in text or "歇着" in text or "不外跑" in text:
-            policy.off_days_required = max(policy.off_days_required, count)
-        else:
-            policy.no_order_days_required = max(policy.no_order_days_required, count)
+        policy.off_days_required = max(policy.off_days_required, count)
     if "放空一整天不接单" in text:
         policy.no_order_days_required = max(policy.no_order_days_required, 1)
     if "同一天接单不得超过" in text:
@@ -516,7 +523,7 @@ def _parse_off_days_penalty(text: str, item: Any, policy: PreferencePolicy) -> N
     """三月怎么也得抽三个整天完全歇着 / 起码留两个整天停驶检修 / 别给我排活"""
     m = re.search(r"(?:抽|留|至少|起码)[一-鿿]*?([一-鿿0-9]+)个?整[天日]\s*(?:完全歇着|停驶|歇着|别排活|不进)", text)
     if m:
-        count = _chinese_or_int(m.group(1))
+        count = _first_int(m.group(1)) or 1
         if isinstance(item, dict) and count > 0:
             penalty = float(item.get("penalty_amount", 0) or 0)
             policy.off_days_required = max(policy.off_days_required, count)
